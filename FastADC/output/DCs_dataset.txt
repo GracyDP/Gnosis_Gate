@@ -1,0 +1,4 @@
+¬{ t0.COL1 == t1.COL1 ∧ t0.COL2 <> t1.COL2 }
+¬{ t0.COL0 > t1.COL0 ∧ t0.COL1 <= t1.COL1 ∧ t0.COL2 == t1.COL2 }
+¬{ t0.COL0 <= t1.COL1 }
+¬{ t0.COL0 <> t1.COL0 ∧ t0.COL1 == t1.COL1 }

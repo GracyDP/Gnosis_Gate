@@ -1,0 +1,8 @@
+¬{ t0.Attr5 >= t1.Attr12 }
+¬{ t0.Attr4 <= t1.Attr5 ∧ t0.Attr4 >= t1.Attr12 }
+¬{ t0.Attr4 >= t1.Attr4 ∧ t0.Attr4 <= t1.Attr5 }
+¬{ t0.Attr4 >= t1.Attr12 ∧ t0.Attr12 <= t1.Attr12 }
+¬{ t0.Attr4 <= t1.Attr5 ∧ t0.Attr5 >= t1.Attr5 }
+¬{ t0.Attr4 >= t1.Attr12 ∧ t0.Attr5 <= t1.Attr5 }
+¬{ t0.Attr4 == t1.Attr5 ∧ t0.Attr12 == t1.Attr12 }
+¬{ t0.Attr4 <= t1.Attr4 ∧ t0.Attr4 >= t1.Attr12 }

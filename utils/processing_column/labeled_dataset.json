@@ -1,0 +1,125 @@
+{
+  "Adult_preProcessed": {
+    "identifiers": [],
+    "quasi_identifiers": [
+      "age", "hours-per-week", "occupation", "education-num", "workclass",
+      "relationship", "marital-status", "education", "race", "native-country", "sex"
+    ],
+    "non_sensitive": [
+      "capital-gain", "capital-loss", "fnlwgt"
+    ]
+  },
+  "Diabetes_preProcessed": {
+    "identifiers": [
+      "patient_nbr", "encounter_id"
+    ],
+    "quasi_identifiers": [
+      "age", "race", "gender", "payer_code", "medical_specialty",
+      "discharge_disposition_id", "admission_source_id", "admission_type_id"
+    ],
+    "non_sensitive": [
+      "num_medications", "num_lab_procedures", "num_procedures", "time_in_hospital",
+      "number_inpatient", "number_outpatient", "number_emergency", "number_diagnoses",
+      "A1Cresult", "max_glu_serum", "insulin", "diabetesMed", "change",
+      "glipizide", "metformin", "pioglitazone", "rosiglitazone", "glyburide",
+      "repaglinide", "glimepiride", "diag_1", "diag_2", "diag_3"
+    ]
+  },
+  "FinancialFakerDB_preProcessed": {
+    "identifiers": [
+      "client_id", "application_id", "birth_date", "address"
+    ],
+    "quasi_identifiers": [
+      "city", "employment_type", "years_at_job", "owns_car", "owns_house", "income"
+    ],
+    "non_sensitive": [
+      "balance", "account_age_days", "avg_loan_amount", "credit_score", "credit_amount",
+      "application_date", "last_contact", "income_to_credit_ratio",
+      "previous_loans", "late_payments_3y", "default"
+    ]
+  },
+  "HealthcareDB_preProcessed": {
+    "identifiers": [
+      "Name", "Doctor", "Hospital", "Room Number"
+    ],
+    "quasi_identifiers": [
+      "Age", "Gender", "Blood Type", "Medical Condition", "Medication",
+      "Insurance Provider", "Admission Type"
+    ],
+    "non_sensitive": [
+      "Billing Amount", "Discharge Date", "Date of Admission"
+    ]
+  },
+  "HealthFakerDB_preProcessed": {
+    "identifiers": [
+      "medical_record_num", "patient_id", "doctor_notes", "birth_date"
+    ],
+    "quasi_identifiers": [
+      "zip_code", "city", "family_history", "blood_type", "income_level",
+      "education_level", "gender", "employment_status", "admission_datetime"
+    ],
+    "non_sensitive": [
+      "blood_pressure_systolic", "blood_pressure_diastolic", "cholesterol", "glucose",
+      "white_blood_cells", "creatinine", "hemoglobin", "bmi", "last_visit_date",
+      "next_visit_date", "dosage_mg", "prescription_1", "prescription_2", "allergies",
+      "chronic_conditions", "alcohol_consumption", "smoker"
+    ]
+  },
+  "hepatitis_preProcessed": {
+    "identifiers": [],
+    "quasi_identifiers": [
+      "Age", "Sex"
+    ],
+    "non_sensitive": [
+      "Protime", "Albumin", "Alk Phosphate", "Bilirubin", "Sgot", "Histology",
+      "Ascites", "Varices", "Malaise", "Spiders", "Anorexia", "Steroid", "Fatigue",
+      "Liver Big", "Spleen Palpable", "Liver Firm", "Antivirals"
+    ]
+  },
+  "Restaurant_preProcessed": {
+    "identifiers": [
+      "Restaurant Name", "Restaurant ID", "Address"
+    ],
+    "quasi_identifiers": [
+      "Latitude", "Longitude", "City", "Locality", "Locality Verbose"
+    ],
+    "non_sensitive": [
+      "Votes", "Average Cost for two", "Aggregate rating", "Price range",
+      "Has Online delivery", "Rating text", "Rating color", "Has Table booking",
+      "Country Code", "Currency", "Is delivering now"
+    ]
+  },
+  "safety_db_preProcessed": {
+    "identifiers": [],
+    "quasi_identifiers": [
+      "age", "education_level", "health_status", "economic_status",
+      "marital_status", "gender", "profession", "mental_health_status"
+    ],
+    "non_sensitive": [
+      "query", "scenario"
+    ]
+  },
+  "student-preProcessed": {
+    "identifiers": [],
+    "quasi_identifiers": [
+      "sex", "age", "address", "famsize", "Pstatus", "Medu", "Fedu",
+      "Mjob", "Fjob", "guardian", "romantic"
+    ],
+    "non_sensitive": [
+      "school", "reason", "traveltime", "studytime", "failures", "schoolsup",
+      "famsup", "paid", "activities", "nursery", "higher", "internet", "famrel",
+      "freetime", "goout", "Dalc", "Walc", "health", "absences", "G1", "G2", "G3"
+    ]
+  },
+  "TitanicDB_preProcessed": {
+    "identifiers": [
+      "Name", "Ticket", "PassengerId", "Cabin"
+    ],
+    "quasi_identifiers": [
+      "Sex", "Age"
+    ],
+    "non_sensitive": [
+      "Fare", "SibSp", "Embarked", "Parch", "Pclass"
+    ]
+  }
+}
