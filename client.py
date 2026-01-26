@@ -38,6 +38,7 @@ from utils.utils_Client import get_dataset_pandas, compute_similarity_no_sens, \
     fill_dataset_with_encrypt_to_file_h5, create_dir, \
     find_all_csv_files
 from utils.utils_common import print_status
+from utils.client_callback_server import start_callback_server, set_client_context, set_encrypted_data
 
 warnings.filterwarnings("ignore")
 
@@ -58,100 +59,43 @@ SCHEMA = 'CKKS'
 # Dizionario con i path del dataset e file temporanei
 path_dict = {}
 
-#**********NEW
-def _matrix_already_computed(exp_path: str) -> bool:
-    """
-    True se la matrice (output server) è già presente nella cartella esperimento.
-    """
-    matrices_dir = os.path.join(exp_path, "Matrices")
-    matrix_csv = os.path.join(exp_path, "Matrix_DCs.csv")
-    return os.path.isdir(matrices_dir) and os.path.exists(matrix_csv)
-#**********END
-
-
 def compute_minimum(path):
-    print_status('[CLIENT]', ' Inizio computazioni minimi.')
+    print_status('[CLIENT]',' Inizio computazioni minimi.')
+    
+    # Debug: mostra quale file viene inviato al server
+    print_status('[CLIENT]', f' File inviato al server: {path_dict["path_df"]}')
+    print_status('[CLIENT]', f' File esiste: {os.path.exists(path_dict["path_df"])}')
 
     url = f"{server_url.rstrip('/')}{evaluate_endpoint}"
-    #**********NEW
-    print_status('[CLIENT]', f' Chiamo server: {url}')
-    print_status('[CLIENT]', f' path_df={path_dict.get("path_df")} | path_exp={path}')
-    #**********END
-
-    resp = requests.get(url, json={'path_df': path_dict['path_df'], 'path': path})
-
-    #**********NEW
-    # Se il server risponde con errore, stampo un minimo di contesto prima di lanciare l’eccezione
-    if resp.status_code >= 400:
-        print_status('[CLIENT]', f' Server response status={resp.status_code}')
-        try:
-            print_status('[CLIENT]', f' Server response body={resp.text[:500]}')
-        except Exception:
-            pass
-    #**********END
-
+    resp = requests.post(url,json={'path_df': path_dict['path_df'], 'path': path})
     resp.raise_for_status()
 
-    print_status('[CLIENT]', ' End computazioni minimi.')
+    print_status('[CLIENT]',' End computazioni minimi.')
 
     return True
 
-
 def thr_computeMin(path, df, dataset_name):
-    #**********NEW
-    # Se la matrice esiste già (es. run precedente crashato dopo averla generata),
-    # evito di richiamare il server e considero l’operazione completata.
-    if _matrix_already_computed(path):
-        print_status('[CLIENT]', '[Matrix] Matrice già presente su disco. Skip chiamata al server.')
-        print_status('[CLIENT]', f' Path matrice: {os.path.join(path, "Matrix_DCs.csv")}')
-        # Provo comunque a (ri)scrivere il logGenerale_DC.txt per coerenza
-        try:
-            with open(f'{path}/logGenerale_DC.txt', 'w') as f1:
-                f1.write(
-                    f'Dataset: {dataset_name}\n'
-                    f'NUMERO RIGHE: {df.shape[0]}\n'
-                    f'NUMERO COLONNE: {df.shape[1]}\n'
-                    f'NOTE: Matrice già presente, non ricalcolata.\n'
-                )
-        except Exception as e:
-            print_status('[CLIENT]', f'[WARN] Impossibile scrivere logGenerale_DC.txt: {e}')
-        return True
-    #**********END
-
     start = time.time()
-
     if compute_minimum(path=path):
         end_time_dc = time.time()
         timing_dc = end_time_dc - start
-
-        #**********NEW
-        print_status('[CLIENT]', '[Matrix] Computazione completata. Scrivo logGenerale_DC.txt.')
-        #**********END
-
-        try:
-            with open(f'{path}/logGenerale_DC.txt', 'w') as f1:
-                f1.write(
-                    f'Dataset: {dataset_name}\n'
-                    f'NUMERO RIGHE: {df.shape[0]}\n'
-                    f'NUMERO COLONNE: {df.shape[1]}\n'
-                )
-                f1.write(
-                    f'START TIME: {start:.3f}\n'
-                    f'END TIME:{end_time_dc:.3f}\n'
-                    f'TIMING: {timing_dc:.3f}'
-                )
-        except Exception as e:
-            print_status('[CLIENT]', f'[WARN] Impossibile scrivere logGenerale_DC.txt: {e}')
-
+        with open(f'{path}/logGenerale_DC.txt', 'w') as f1:
+            f1.write(f'Dataset: {dataset_name}\nNUMERO RIGHE: {df.shape[0]}\nNUMERO COLONNE: {df.shape[1]}\n')
+            f1.write(f'START TIME: {start:.3f}\nEND TIME:{end_time_dc:.3f}\nTIMING: {timing_dc:.3f}')
     else:
         raise Exception('[CLIENT] Error while creating matrix!')
 
     return True
 
-
 def main(experiments):
 
     for exp in experiments:
+        # Avvia server di callback per ricevere richieste dal server principale
+        print_status('[CLIENT]', 'Avvio server di callback per richieste dal server...')
+        callback_thread = Thread(target=start_callback_server, args=(5001,), daemon=True)
+        callback_thread.start()
+        time.sleep(1)  # Aspetta che il server si avvii
+        
         client_thread = Thread(target=query_toServer.main)
         client_thread.start()
 
@@ -164,58 +108,75 @@ def main(experiments):
         create_ctx = exp['create_context']
         create_dataset = exp['create_dataset']
 
+    # try:
         global path_dict
         db_n, path, path_dict = create_dir(exp)
 
         if dataset_name:
             print(f"*** Select: {db_n} - Len {(pd.read_csv(dataset_path)).shape} - Modality: {modality} - Thr: {value_thr} ***")
         else:
-            print_status('[CLIENT]', " No dataset selected")
+            print_status('[CLIENT]'," No dataset selected")
 
-        print_status('[CLIENT]', ' Starting process...')
+        print_status('[CLIENT]',' Starting process...')
 
         if modality != 'All_NOT_Sensitive':
-            print_status('[CLIENT]', f' Creating {SCHEMA} context...')
+            print_status('[CLIENT]',f' Creating {SCHEMA} context...')
             if create_context(SCHEMA, path, create_ctx):
-                print_status('[CLIENT]', f' {SCHEMA} Done.')
+                print_status('[CLIENT]',f' {SCHEMA} Done.')
             else:
-                print_status('[CLIENT]', f' Failed to create {SCHEMA} context.')
+                print_status('[CLIENT]',f' Failed to create {SCHEMA} context.')
 
-        print_status('[CLIENT]', '[Dataset] Loading original dataset...')
+        print_status('[CLIENT]','[Dataset] Loading original dataset...')
         df = get_dataset_pandas(dataset_path)
-        print_status('[CLIENT]', '[Dataset] Done.')
+        print_status('[CLIENT]','[Dataset] Done.')
 
-        print_status('[CLIENT]', '[Threshold] Loading thresholds...')
-        load_or_create_thresholds(df, path, calculate_thr, value_thr, dataset_name, modality)
-        print_status('[CLIENT]', '[Threshold] Done.')
+        print_status('[CLIENT]','[Threshold] Loading thresholds...')
+        load_or_create_thresholds(df, path, calculate_thr, value_thr,dataset_name, modality)
+        print_status('[CLIENT]','[Threshold] Done.')
 
         ### NELLA VERSIONE DI TEST LE THRESHOLD e I DATASET SONO STATI GIA CALCOLATI
         if create_dataset:
-            print_status('[CLIENT]', '[Homomorphic] Transforming dataset...')
+            print_status('[CLIENT]','[Homomorphic] Transforming dataset...')
             if fill_dataset_with_encrypt_to_file_h5(input_df=df, path_dict=path_dict):
-                print_status('[CLIENT]', ' Homomorphic Transformation Done.')
+                print_status('[CLIENT]',' Homomorphic Transformation Done.')
             else:
                 raise Exception('[CLIENT] Error while transforming dataset.')
         else:
             # Caricare il file parquet in un DataFrame
-            print_status('[CLIENT]', '[Mongo] Carico DB da locale.')
+            print_status('[CLIENT]','[Mongo] Carico DB da locale.')
 
-        print_status('[CLIENT]', '[Mongo_DB Fake] Upload dataset...')
+        print_status('[CLIENT]','[Mongo_DB Fake] Upload dataset...')
 
-        print_status('[CLIENT]', '[Threshold] Sending threshold...')
+        print_status('[CLIENT]','[Threshold] Sending threshold...')
         if send_threshold(path):
-            print_status('[CLIENT]', '[Threshold] Threshold Sent.')
+            print_status('[CLIENT]','[Threshold] Threshold Sent.')
         else:
             raise Exception('[CLIENT][Threshold] Failed to send threshold.')
 
         if modality != 'All_NOT_Sensitive':
-            print_status('[CLIENT]', '[CKKS_Context] Sending CKKS_Context...')
+            print_status('[CLIENT]','[CKKS_Context] Sending CKKS_Context...')
             if send_ckks_context():
-                print_status('[CLIENT]', '[CKKS_Context] CKKS_Context Sent.')
+                print_status('[CLIENT]','[CKKS_Context] CKKS_Context Sent.')
+                
+                # Carica anche il contesto nel callback server per poter decriptare
+                print_status('[CLIENT]','[CALLBACK] Configurazione contesto per callback server...')
+                import tenseal as ts
+                # Carica il contesto segreto per decriptare
+                context_path = 'utils\Homomorphic\ckks\ckks_secret.context'
+                with open(context_path, 'rb') as f:
+                    secret_context = ts.context_from(f.read())
+                set_client_context(secret_context)
+                print_status('[CLIENT]','[CALLBACK] Contesto configurato.')
+                
+                # IMPORTANTE: Carica il dataset ORIGINALE in chiaro nel callback
+                # Il callback deve calcolare le operazioni sui dati DECRIPTATI, non cifrati
+                print_status('[CLIENT]','[CALLBACK] Caricamento dataset originale in chiaro...')
+                set_encrypted_data({'__original_df__': df})  # Passa l'intero DataFrame
+                print_status('[CLIENT]',f'[CALLBACK] Dataset originale caricato: {df.shape}')
             else:
                 raise Exception('[CLIENT][CKKS_Context] Failed to send CKKS_Context.')
 
-        fx = open("log/log_client.txt", "w")
+        fx = open("log/log_client.txt","w")
 
         if not thr_computeMin(path, df, dataset_name):
             raise Exception('Error while computing Matrix!')
@@ -235,22 +196,21 @@ def main(experiments):
         else:
             raise Exception('Errore salvataggio esperimenti non conclusi')
 
-        db_n, path, _ = create_dir(exp)
+        db_n, path,_ = create_dir(exp)
 
         with open(f'./Test/{db_n}/Exp_Errors.txt', 'a') as f:
             f.write(f"Dataset: {db_n} - Modality: {modality} - Thr: {value_thr} - Path: {path}\n")
         os.system('cls' if os.name == 'nt' else 'clear')
         print(f'DONE: Modality: {modality} on {db_n} - Thr: {value_thr}\n')
-        print('*' * 30)
+        print('*'*30)
         time.sleep(2)
-
 
 if __name__ == '__main__':
     list_dataset = find_all_csv_files("DB")
 
     numeric_values = [0, 2, 4, 8]
     string_values = [0.50, 0.75, 0.90, 1.0]
-    modality = ['Manual', 'All_NOT_Sensitive', 'All_Sensitive']
+    modality = ['Manual','All_NOT_Sensitive', 'All_Sensitive']
 
     # Generazione delle configurazioni
     experiments = []
@@ -271,6 +231,6 @@ if __name__ == '__main__':
                 'create_dataset': False,
             }
             experiments.append(config)
-
     print(f'Collected {len(experiments)//len(list_dataset)} experiments for {len(list_dataset)} datasets!\n')
+
     main(experiments)

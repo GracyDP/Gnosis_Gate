@@ -1,101 +1,106 @@
 """
 ====================================================
-Python Server per l'elaborazione sicura di dataset
+Python Server per l’elaborazione sicura di dataset
 ====================================================
-Modificato per:
-- Confronto RIGHE x RIGHE invece di features x features
-- Nessun filtering/pruning delle colonne
-- Tutte le colonne vengono utilizzate nel confronto
+Questo server Flask espone varie API per:
+- Salvare e gestire soglie di configurazione (`/save_thr`)
+- Caricare un contesto TenSEAL per la crittografia omomorfica (`/upload_context`)
+- Caricare e processare dataset da file (`/`)
+- Calcolare partizioni e similarità tra dati sensibili (Crittografati con schema CKKS)
+- Valutare colonne e costruire una matrice di vincoli DC (`/evaluate-column`)
+- Chiudere la connessione e liberare memoria (`/end_connection`)
+
+Funzionalità principali:
+- Supporta input in diversi formati (HDF5, Parquet, CSV)
+- Utilizza TenSEAL per gestire dati crittografati (lazy vectors)
+- Salva log delle performance con memory_profiler
+- Genera file intermedi (HDF5, CSV, JSON) per l’elaborazione
 """
 
 import gc
-import json
 import logging
 import os
 import warnings
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
-
 import numpy as np
 import pandas as pd
 import tenseal as ts
+import h5py
 from flask import Flask, request, jsonify
+from typing import Dict, List, Tuple, Optional
 
 from utils.utils_Server import salva_json
 from utils.utils_common import save_df_h5, print_status, the_end, load_columns_from_h5
+from utils.utils_Server_request import request_operation_to_client
 
 warnings.filterwarnings("ignore")
 
-# ============================================================================
-# CONFIGURAZIONE GLOBALE
-# ============================================================================
-
 app = Flask('python-server')
 
-# Variabili globali per stato del server
-json_item: Dict = {}
-context: Optional[ts.Context] = None
-path: str = ''
+json_item = {}
+context = None
 
-fx = open("log/log_server.txt", "w")
+path = ''
 
-
-# ============================================================================
-# ENDPOINT FLASK
-# ============================================================================
+fx = open("log/log_server.txt","w")
 
 @app.route("/save_thr", methods=["POST"])
 def save_thr():
     """
-    Endpoint per salvare la soglia (thr) inviata dal client.
-    """
-    global json_item, path
-    print_status('[SERVER]', '[Save thr] Server connected.')
+        Endpoint per salvare la soglia (thr) inviata dal client.
+        - Riceve JSON {"thr": {...}, "path": "..."}
+        - Salva il contenuto in memoria
+        - Stampa log e restituisce conferma
+        """
+
+    global json_item
+    print_status('[SERVER]','[Save thr] Server connected.')
     data = request.get_json(force=True)
 
+    # Estraggo il dict thr e il path
     json_item = data.get("thr")
+    global path
     path = data.get("path")
 
+    # Controllo se il campo thr è presente
     if json_item is None:
-        print_status('[SERVER]', '[Save thr] Error: Threshold not found.')
+        print_status('[SERVER]','[Save thr] Error: Threshold not found.')
         return jsonify({"error": "Nessun campo 'thr' nel payload"}), 400
     else:
-        print_status('[SERVER]', '[Save thr] Threshold file found.')
+        print_status('[SERVER]','[Save thr] Threshold file found.')
         return jsonify({"status": "saved"}), 200
-
 
 @app.route("/upload_context", methods=["POST"])
 def upload_context():
     """
     Endpoint per caricare un contesto TenSEAL inviato come file.
+    - Legge il contesto crittografico dal client
+    - Lo memorizza in una variabile globale
     """
+
     global context
     context = ts.context_from(request.files["file"].read())
 
-    print_status('[SERVER]', '[CKKS] Context file found.')
+    print_status('[SERVER]','[CKKS] Context file found.')
     return "Contesto pubblico ricevuto", 200
-
 
 @app.route("/end_connection", methods=["POST"])
 def end_connection():
     """
-    Endpoint per chiudere la connessione.
+    Endpoint per chiudere la connessione:
+    - Resetta le variabili globali
+    - Libera memoria con gc.collect()
     """
     werk_log = logging.getLogger('werkzeug')
     prev_level = werk_log.level
     werk_log.setLevel(logging.ERROR)
-    
     try:
         flag = request.form.get("flag")
         flag = flag.lower() == 'true' if flag is not None else False
 
-        global json_item, context, path
-        json_item, context, path = {}, None, ''
+        path, context, json_item = None, None, None
         gc.collect()
-        
-        print_status('[SERVER]', 'End Connection.')
+        print_status('[SERVER]','End Connection.')
         os.system('cls' if os.name == 'nt' else 'clear')
-        
         if flag:
             the_end('[SERVER]')
 
@@ -103,382 +108,432 @@ def end_connection():
     finally:
         werk_log.setLevel(prev_level)
 
-
-@app.route("/evaluate-column", methods=["GET"])
-def evaluate_column():
-    """
-    Endpoint per valutare righe e generare matrice DC ROW x ROW.
-    
-    Request body:
-    {
-        "path_df": "/path/to/dataset.h5",
-        "path": "/path/to/output"
-    }
-    """
-    try:
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({"error": "Nessun dato ricevuto"}), 400
-        
-        path_df = data.get('path_df')
-        output_path = data.get('path')
-        
-        if not path_df or not output_path:
-            return jsonify({"error": "path_df e path sono obbligatori"}), 400
-        
-        print_status('[SERVER]', '=' * 60)
-        print_status('[SERVER]', f'[Evaluate] Elaborazione dataset: {path_df}')
-        
-        # 1. Carica threshold da json_item globale
-        if not json_item:
-            print_status('[SERVER]', '[Evaluate] WARN: json_item vuoto, uso default')
-            config = ThresholdConfig()
-        else:
-            config = ThresholdConfig.from_json_item(json_item)
-            print_status('[SERVER]', f'[Evaluate] Threshold numeric: {config.numeric_threshold}, '
-                                 f'string: {config.string_threshold}')
-
-        # 2. Carica dataset
-        h5_path, df = DatasetLoader.load_and_convert(path_df)
-
-        print_status('[SERVER]', f'[Evaluate] Dataset caricato: {df.shape[0]} righe, '
-                                 f'{df.shape[1]} colonne')
-
-        # 3. Costruzione matrice DC ROW x ROW
-        builder = DCMatrixBuilder(
-            df=df,
-            config=config,
-            json_item=json_item,
-            context=context
-        )
-
-        df_matrix, rank_mapping, stats = builder.build_matrix()
-
-        # 4. Salvataggio risultati
-        os.makedirs(output_path, exist_ok=True)
-
-        matrix_path = os.path.join(output_path, "Matrix_DCs.csv")
-        rank_path = os.path.join(output_path, "Rank_map.json")
-        stats_path = os.path.join(output_path, "dc_stats.json")
-
-        df_matrix.to_csv(matrix_path, index=True)
-        salva_json(rank_mapping, rank_path)
-        salva_json(stats, stats_path)
-
-        print_status('[SERVER]', '[Evaluate] Risultati salvati:')
-        print_status('[SERVER]', f'  - Matrice DC: {matrix_path}')
-        print_status('[SERVER]', f'  - Rank mapping: {rank_path}')
-        print_status('[SERVER]', f'  - Statistiche: {stats_path}')
-
-        # 5. Cleanup memoria
-        del df, df_matrix
-        gc.collect()
-
-        return jsonify({
-            "status": "completed",
-            "matrix_path": matrix_path,
-            "rank_path": rank_path,
-            "stats_path": stats_path,
-            "stats": stats
-        }), 200
-
-    except Exception as e:
-        print_status('[SERVER]', f'[Evaluate] ERROR: {e}')
-        import traceback
-        print_status('[SERVER]', f'[Evaluate] Traceback:\n{traceback.format_exc()}')
-        return jsonify({"error": str(e)}), 500
+# Configurazione logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# MODELLI DATI E CONFIGURAZIONE
-# ============================================================================
-
-@dataclass
-class ThresholdConfig:
-    """
-    Configurazione threshold da json_item.
-    """
-    numeric_threshold: int = 0
-    string_threshold: float = 0.5
-    
-    @classmethod
-    def from_json_item(cls, json_item: Dict) -> 'ThresholdConfig':
-        """
-        Carica threshold da json_item globale.
-        """
-        try:
-            thresholds = json_item.get('thresholds', {})
-            
-            string_thr = thresholds.get('string', 0.5)
-            if isinstance(string_thr, str):
-                string_thr = float(string_thr)
-            
-            return cls(
-                numeric_threshold=int(thresholds.get('numeric', 0)),
-                string_threshold=string_thr
-            )
-        except Exception as e:
-            print_status('[SERVER]', f'[Config] Errore parsing json_item: {e}. Uso default.')
-            return cls()
-
-
-# ============================================================================
-# GESTIONE DATASET E CONVERSIONI
-# ============================================================================
-
-class DatasetLoader:
-    """Gestisce caricamento e conversione dataset"""
+class DataFrameLoader:
+    """Gestisce il caricamento e conversione di diversi formati di dataset"""
     
     @staticmethod
     def load_and_convert(path_df: str) -> Tuple[str, pd.DataFrame]:
         """
-        Carica dataset da vari formati e converte in HDF5 se necessario.
+        Carica un dataframe da vari formati e lo converte in HDF5 se necessario.
+        
+        Args:
+            path_df: Path al file del dataframe
+            
+        Returns:
+            Tupla (path_h5, dataframe)
         """
         if not os.path.exists(path_df):
             raise FileNotFoundError(f"File non trovato: {path_df}")
         
         ext = os.path.splitext(path_df)[1].lower()
         
-        if ext == '.h5':
-            print_status('[SERVER]', f'[Loader] Caricamento HDF5: {path_df}')
-            return path_df, DatasetLoader._load_from_h5(path_df)
-        
-        elif ext == '.parquet':
-            print_status('[SERVER]', f'[Loader] Conversione Parquet -> HDF5')
-            df = pd.read_parquet(path_df)
-            h5_path = path_df.replace('.parquet', '.h5')
-            save_df_h5(df_path=h5_path, df=df)
-            return h5_path, df
-        
-        elif ext == '.csv':
-            print_status('[SERVER]', f'[Loader] Conversione CSV -> HDF5')
-            df = pd.read_csv(path_df)
-            h5_path = path_df.replace('.csv', '.h5')
-            save_df_h5(df_path=h5_path, df=df)
-            return h5_path, df
-        
-        else:
-            raise ValueError(f"[Loader] Estensione non supportata: {ext}")
+        try:
+            if ext == '.h5':
+                logger.info(f"Caricamento HDF5: {path_df}")
+                return path_df, DataFrameLoader._load_from_h5(path_df)
+            
+            elif ext == '.parquet':
+                logger.info(f"Conversione Parquet -> HDF5: {path_df}")
+                df = pd.read_parquet(path_df)
+                h5_path = path_df.replace('.parquet', '.h5')
+                save_df_h5(df_path=h5_path, df=df)
+                return h5_path, df
+            
+            elif ext == '.csv':
+                logger.info(f"Conversione CSV -> HDF5: {path_df}")
+                df = pd.read_csv(path_df)  # FIX: era pd.read_parquet
+                h5_path = path_df.replace('.csv', '.h5')
+                save_df_h5(df_path=h5_path, df=df)
+                return h5_path, df
+            
+            else:
+                raise ValueError(f"Estensione non supportata: {ext}")
+                
+        except Exception as e:
+            logger.error(f"Errore nel caricamento del file: {e}")
+            raise
     
     @staticmethod
     def _load_from_h5(path: str) -> pd.DataFrame:
         """Carica dataframe da file HDF5"""
+        print_status('[SERVER]', f'🔍 DEBUG: Caricamento file H5: {path}')
+        
+        # Prima prova a leggere un oggetto DataFrame salvato come '/df'
+        with h5py.File(path, 'r') as h5file:
+            if 'df' in h5file:
+                print_status('[SERVER]', f'🔍 DEBUG: Trovato /df, caricamento con pd.read_hdf')
+                return pd.read_hdf(path, key='/df')
+
+        # Se non esiste '/df', ricostruisci il DataFrame leggendo tutte
+        # le chiavi disponibili nello store (supporta sia 'col_<name>'
+        # che chiavi plain come '<name>'). Questo evita di restituire
+        # solo la prima colonna quando il file contiene dataset separati.
         with pd.HDFStore(path, mode='r') as store:
-            if '/df' in store.keys():
-                return store['/df']
-            
-            all_keys = [key.strip('/') for key in store.keys()]
-            col_keys = [key for key in all_keys if key.startswith('col_')]
-            
+            keys = [k.strip('/') for k in store.keys()]
+            print_status('[SERVER]', f'🔍 DEBUG: Chiavi trovate: {keys[:5]}...')  # Prime 5
+
+            # Se trovi chiavi con prefisso 'col_' usa la funzione esistente
+            col_keys = [k for k in keys if k.startswith('col_')]
             if col_keys:
-                columns = [key.replace('col_', '') for key in col_keys]
+                columns = [k.replace('col_', '') for k in col_keys]
+                print_status('[SERVER]', f'🔍 DEBUG: Uso load_columns_from_h5 per {len(columns)} colonne')
                 return load_columns_from_h5(path, columns)
-            
-            if all_keys:
-                return store[f'/{all_keys[0]}']
-            
-            raise ValueError("[Loader] Nessuna chiave valida in HDF5")
 
+            # Altrimenti concatena tutti i dataset presenti nello store
+            if keys:
+                df_parts = []
+                for idx, raw_key in enumerate(store.keys()):
+                    part = store[raw_key]
+                    
+                    # DEBUG: Mostra tipo del primo valore della prima colonna
+                    if idx == 0 and len(part) > 0:
+                        first_col = part.columns[0]
+                        first_val = part[first_col].iloc[0]
+                        print_status('[SERVER]', f'🔍 DEBUG: Prima chiave "{raw_key}"')
+                        print_status('[SERVER]', f'         Tipo prima colonna: {type(part[first_col].iloc[0]).__name__}')
+                        print_status('[SERVER]', f'         Dtype: {part[first_col].dtype}')
+                        print_status('[SERVER]', f'         Ha .serialize? {hasattr(first_val, "serialize")}')
+                        print_status('[SERVER]', f'         È bytes? {isinstance(first_val, bytes)}')
+                    
+                    df_parts.append(part)
 
-# ============================================================================
-# COSTRUTTORE MATRICE DC ROW x ROW
-# ============================================================================
+                df_full = pd.concat(df_parts, axis=1)
+
+                # Normalizza eventuali prefissi nelle colonne (es. 'col_')
+                new_cols = []
+                for c in df_full.columns:
+                    if isinstance(c, str) and c.startswith('col_'):
+                        new_cols.append(c.replace('col_', ''))
+                    else:
+                        new_cols.append(c)
+                df_full.columns = new_cols
+                
+                print_status('[SERVER]', f'🔍 DEBUG: DataFrame finale shape={df_full.shape}')
+                return df_full
+
+            raise ValueError("Nessuna chiave valida trovata nel file HDF5")
+
 
 class DCMatrixBuilder:
     """
-    Costruisce matrice DC ROW x ROW confrontando tutte le righe del dataset.
-    NESSUN FILTERING: usa tutte le colonne disponibili.
+    Costruisce la matrice dei vincoli di denial (Denial Constraints).
     """
     
-    def __init__(
-        self,
-        df: pd.DataFrame,
-        config: ThresholdConfig,
-        json_item: Dict,
-        context: Optional[ts.Context] = None
-    ):
+    def __init__(self, df: pd.DataFrame, thresholds: Dict = None):
         self.df = df
-        self.config = config
-        self.json_item = json_item
-        self.context = context
-        
-        # USA TUTTE LE COLONNE - nessun filtering
         self.columns = df.columns.tolist()
-        self.n_rows = len(df)
         self.n_cols = len(self.columns)
-        
-        # Identifica colonne sensibili e loro tipi
-        self.sensitive_columns = set(json_item.get('sensitive_columns', []))
-        self.column_types = json_item.get('column_types', {})
-        
-        print_status('[SERVER]', f'[Builder] Configurazione:')
-        print_status('[SERVER]', f'  - Righe da confrontare: {self.n_rows}')
-        print_status('[SERVER]', f'  - Colonne utilizzate: {self.n_cols} (TUTTE)')
-        print_status('[SERVER]', f'  - Colonne sensibili: {len(self.sensitive_columns)}')
+        self.thresholds = thresholds or {}
+        # Preprocessa i dati una volta sola
+        self._preprocess_data()
     
-    def build_matrix(self) -> Tuple[pd.DataFrame, Dict, Dict]:
-        """
-        Costruisce matrice DC ROW x ROW.
+    def _preprocess_data(self):
+        """Prepara i dati per l'analisi, gestendo vari formati e dati cifrati"""
+        self.col_info = {}
         
-        Returns:
-            - DataFrame matrice (n_rows x n_rows)
-            - Dict rank mapping
-            - Dict statistiche
-        """
-        print_status('[SERVER]', '[Builder] === INIZIO COSTRUZIONE MATRICE DC ROW x ROW ===')
+        print_status('[SERVER]', f'Analisi di {len(self.columns)} colonne...')
+        print_status('[SERVER]', f'Threshold disponibili: {len(self.thresholds)} colonne')
         
-        stats = {
-            "n_rows": self.n_rows,
-            "n_columns": self.n_cols,
-            "n_sensitive_columns": len(self.sensitive_columns),
-            "n_comparisons_total": self.n_rows * (self.n_rows + 1) // 2,
-            "n_comparisons_computed": 0,
-            "n_encrypted_operations": 0
-        }
+        for col in self.columns:
+            series = self.df[col].dropna()
+            
+            # Controlla se la colonna è marcata come sensibile nei threshold
+            col_threshold = self.thresholds.get(col, {})
+            is_sensitive = col_threshold.get('sensitive', False)
+            
+            # Debug: mostra info colonna
+            if len(series) > 0:
+                first_val = series.iloc[0]
+                val_type = type(first_val).__name__
+                print_status('[SERVER]', f'  Colonna "{col}": tipo={val_type}, sensitive={is_sensitive}, len={len(series)}')
+            
+            if is_sensitive:
+                # Colonna cifrata (sensibile): memorizza info minime
+                print_status('[SERVER]', f'Colonna CIFRATA rilevata: {col} (da threshold)')
+                self.col_info[col] = {
+                    'original': series,
+                    'is_encrypted': True,
+                    'is_numeric': None,  # Non possiamo saperlo senza decriptare
+                    'unique_values': None,
+                    'nunique': None,
+                    'length': len(series)
+                }
+            else:
+                # Colonna in chiaro: analisi normale
+                numeric_series = pd.to_numeric(series, errors='coerce')
+                
+                self.col_info[col] = {
+                    'original': series,
+                    'is_encrypted': False,
+                    'numeric': numeric_series if numeric_series.notna().sum() > len(series) * 0.5 else None,
+                    'is_numeric': pd.api.types.is_numeric_dtype(series) or numeric_series.notna().sum() > len(series) * 0.5,
+                    'unique_values': set(series.unique()) if len(series) < 10000 else None,
+                    'nunique': series.nunique(),
+                    'length': len(series)
+                }
+    
+    def build_predicate_matrix(self) -> Tuple[pd.DataFrame, Dict]:
+        """Costruisce la matrice dei predicati per Denial Constraints."""
+        logger.info("Costruzione matrice DC...")
         
-        # Inizializza matrice ROW x ROW
-        matrix = np.zeros((self.n_rows, self.n_rows))
+        matrix = np.zeros((self.n_cols, self.n_cols))
         rank_mapping = {}
         
-        # Confronta ogni coppia di righe
-        for i in range(self.n_rows):
-            for j in range(i, self.n_rows):
+        for i, col1 in enumerate(self.columns):
+            for j in range(i, self.n_cols):
+                col2 = self.columns[j]
                 
-                # Calcola distanza/similarità tra riga i e riga j
                 if i == j:
-                    # Diagonale: distanza con se stessa = 0
-                    metric = 0.0
+                    metric = self._compute_diagonal_metric(col1)
                 else:
-                    metric = self._compute_row_distance(i, j, stats)
+                    metric = self._compute_pairwise_metric(col1, col2)
                 
-                stats["n_comparisons_computed"] += 1
-                
-                # Matrice simmetrica
                 matrix[i, j] = metric
                 matrix[j, i] = metric
                 
-                # Rank mapping
-                rank_mapping[f"row_{i}_row_{j}"] = {
-                    "row1_index": int(i),
-                    "row2_index": int(j),
-                    "distance": float(metric),
-                    "rank": int(i * self.n_rows + j)
+                rank_mapping[f"{col1}_{col2}"] = {
+                    "col1": col1,
+                    "col2": col2,
+                    "metric_value": float(metric),
+                    "rank": i * self.n_cols + j,
+                    "col1_index": i,
+                    "col2_index": j
                 }
-                
-                # Log progress ogni 10%
-                if stats["n_comparisons_computed"] % max(1, stats["n_comparisons_total"] // 10) == 0:
-                    progress = (stats["n_comparisons_computed"] / stats["n_comparisons_total"]) * 100
-                    print_status('[SERVER]', f'[Builder] Progresso: {progress:.1f}%')
         
-        # DataFrame finale con indici delle righe
-        row_labels = [f"row_{i}" for i in range(self.n_rows)]
-        df_matrix = pd.DataFrame(matrix, index=row_labels, columns=row_labels)
+        df_matrix = pd.DataFrame(matrix, index=self.columns, columns=self.columns)
         
-        print_status('[SERVER]', '[Builder] === MATRICE DC ROW x ROW COMPLETATA ===')
-        print_status('[SERVER]', f'[Builder] Shape matrice: {df_matrix.shape}')
-        print_status('[SERVER]', f'[Builder] Operazioni su ciphertext: {stats["n_encrypted_operations"]}')
+        logger.info(f"Matrice DC costruita: {df_matrix.shape}")
+        logger.info(f"Valori non-zero fuori diagonale: {np.count_nonzero(matrix - np.diag(np.diag(matrix)))}")
         
-        return df_matrix, rank_mapping, stats
+        return df_matrix, rank_mapping
     
-    def _compute_row_distance(self, row_idx1: int, row_idx2: int, stats: Dict) -> float:
-        """
-        Calcola distanza tra due righe considerando TUTTE le colonne.
+    def _compute_diagonal_metric(self, col: str) -> float:
+        """Calcola metrica per la diagonale."""
+        info = self.col_info[col]
         
-        Strategia:
-        - Per colonne numeriche: distanza normalizzata
-        - Per colonne categoriche: 0 se uguali, 1 se diverse
-        - Per colonne criptate: operazioni su ciphertext
+        # Se è cifrata, non possiamo calcolare metrica - ritorna 1.0 come placeholder
+        if info.get('is_encrypted'):
+            return 1.0
         
-        Restituisce la distanza media su tutte le colonne.
-        """
-        distances = []
+        if info['length'] == 0:
+            return 0.0
         
-        for col in self.columns:
-            is_sensitive = col in self.sensitive_columns
-            col_type = self.column_types.get(col, 'numeric')
-            
-            val1 = self.df.iloc[row_idx1][col]
-            val2 = self.df.iloc[row_idx2][col]
-            
-            # Gestisci valori mancanti
-            if pd.isna(val1) or pd.isna(val2):
-                distances.append(1.0)  # Distanza massima per NA
-                continue
-            
-            # CASO 1: Colonna sensibile/criptata
-            if is_sensitive and self.context is not None:
-                stats["n_encrypted_operations"] += 1
-                dist = self._encrypted_distance(val1, val2, col_type)
-                distances.append(dist)
-            
-            # CASO 2: Colonna numerica chiara
-            elif pd.api.types.is_numeric_dtype(self.df[col]):
-                dist = self._numeric_distance(val1, val2, col)
-                distances.append(dist)
-            
-            # CASO 3: Colonna categorica chiara
-            else:
-                dist = 0.0 if val1 == val2 else 1.0
-                distances.append(dist)
+        if info['is_numeric'] and info['numeric'] is not None:
+            series = info['numeric'].dropna()
+            if len(series) > 0:
+                min_val, max_val = series.min(), series.max()
+                if max_val != min_val:
+                    return float(max_val - min_val)
         
-        # Distanza media su tutte le colonne
-        return float(np.mean(distances)) if distances else 0.0
+        # Fallback: cardinalità normalizzata
+        return float(info['nunique']) / info['length']
     
-    def _numeric_distance(self, val1: float, val2: float, col: str) -> float:
-        """
-        Distanza normalizzata tra valori numerici.
-        Normalizza rispetto al range della colonna.
-        """
+    def _compute_pairwise_metric(self, col1: str, col2: str) -> float:
+        """Calcola metrica di relazione tra due colonne diverse."""
+        info1 = self.col_info[col1]
+        info2 = self.col_info[col2]
+        
+        # Se ALMENO UNA colonna è cifrata, richiedi al client
+        if info1.get('is_encrypted') or info2.get('is_encrypted'):
+            print_status('[SERVER]', f'🔐 Rilevati dati cifrati: {col1} x {col2}')
+            try:
+                # Richiedi al client di calcolare la correlazione/similarità
+                # Passa i nomi delle colonne - il client le ha in memoria
+                result = request_operation_to_client(
+                    operation="correlation",
+                    col1=col1,
+                    col2=col2
+                )
+                print_status('[SERVER]', f'Salvato risultato: {col1} x {col2} = {result:.6f}')
+                return result
+            except Exception as e:
+                logger.warning(f"Errore richiesta al client per {col1}-{col2}: {e}")
+                print_status('[SERVER]', f'ERRORE chiamata client: {e}')
+                return 0.0
+        
+        # Entrambe in chiaro: calcolo locale
+        print_status('[SERVER]', f'Calcolo locale (dati in chiaro): {col1} x {col2}')
+        # Entrambe numeriche
+        if info1['is_numeric'] and info2['is_numeric']:
+            return self._numeric_similarity(col1, col2)
+        
+        # Entrambe categoriche con unique_values disponibili
+        elif info1['unique_values'] is not None and info2['unique_values'] is not None:
+            return self._categorical_overlap(col1, col2)
+        
+        # Metrica basata su cardinalità
+        else:
+            return self._cardinality_similarity(col1, col2)
+    
+    def _numeric_similarity(self, col1: str, col2: str) -> float:
+        """Calcola similarità tra colonne numeriche."""
         try:
-            col_min = self.df[col].min()
-            col_max = self.df[col].max()
-            col_range = col_max - col_min
+            info1 = self.col_info[col1]
+            info2 = self.col_info[col2]
             
-            if col_range == 0:
+            s1 = info1['numeric'] if info1['numeric'] is not None else info1['original']
+            s2 = info2['numeric'] if info2['numeric'] is not None else info2['original']
+            
+            # Reset degli indici per garantire allineamento
+            s1 = s1.reset_index(drop=True)
+            s2 = s2.reset_index(drop=True)
+            
+            # Usa solo i primi N valori comuni
+            min_len = min(len(s1), len(s2))
+            if min_len < 2:
                 return 0.0
             
-            # Distanza normalizzata [0, 1]
-            normalized_dist = abs(val1 - val2) / col_range
-            return min(1.0, normalized_dist)
-        
+            s1_aligned = s1.iloc[:min_len]
+            s2_aligned = s2.iloc[:min_len]
+            
+            # Rimuovi NaN dopo l'allineamento
+            mask = s1_aligned.notna() & s2_aligned.notna()
+            s1_clean = s1_aligned[mask]
+            s2_clean = s2_aligned[mask]
+            
+            if len(s1_clean) < 2:
+                return 0.0
+            
+            # Correlazione di Pearson
+            corr = s1_clean.corr(s2_clean)
+            
+            if pd.isna(corr):
+                # Prova con Spearman come fallback
+                from scipy.stats import spearmanr
+                corr, _ = spearmanr(s1_clean, s2_clean)
+            
+            return abs(float(corr)) if not pd.isna(corr) else 0.0
+            
         except Exception as e:
-            print_status('[SERVER]', f'[Builder] Warn: numeric distance {col}: {e}')
-            return 0.5
+            logger.warning(f"Errore calcolo similarità numerica {col1}-{col2}: {e}")
+            return 0.0
     
-    def _encrypted_distance(self, val1, val2, col_type: str) -> float:
+    def _categorical_overlap(self, col1: str, col2: str) -> float:
+        """Calcola sovrapposizione tra colonne categoriche."""
+        try:
+            set1 = self.col_info[col1]['unique_values']
+            set2 = self.col_info[col2]['unique_values']
+            
+            if not set1 or not set2:
+                return 0.0
+            
+            intersection = len(set1 & set2)
+            union = len(set1 | set2)
+            
+            return float(intersection) / union if union > 0 else 0.0
+            
+        except Exception as e:
+            logger.warning(f"Errore calcolo overlap categorico {col1}-{col2}: {e}")
+            return 0.0
+    
+    def _cardinality_similarity(self, col1: str, col2: str) -> float:
         """
-        Distanza approssimata su valori criptati.
-        
-        NOTA: Su ciphertext non possiamo calcolare distanze esatte.
-        Usiamo threshold configurati come proxy.
+        Metrica di similarità basata sulla cardinalità.
+        Utile quando non si può calcolare correlazione o overlap.
         """
         try:
-            if col_type == 'numeric':
-                # Per numerici criptati: usa threshold numerico
-                return float(self.config.numeric_threshold) / 100.0
-            else:
-                # Per categorici criptati: usa threshold string
-                return self.config.string_threshold
-        
+            n1 = self.col_info[col1]['nunique']
+            n2 = self.col_info[col2]['nunique']
+            
+            if n1 == 0 or n2 == 0:
+                return 0.0
+            
+            # Similarità basata sul rapporto di cardinalità
+            # Valori simili di cardinalità → similarità più alta
+            ratio = min(n1, n2) / max(n1, n2)
+            
+            return float(ratio * 0.5)  # Scala a 0-0.5 per distinguerla da altre metriche
+            
         except Exception as e:
-            print_status('[SERVER]', f'[Builder] Error encrypted distance: {e}')
-            return 0.5
+            logger.warning(f"Errore calcolo similarità cardinalità {col1}-{col2}: {e}")
+            return 0.0
 
-
-# ============================================================================
-# AVVIO SERVER
-# ============================================================================
-
-if __name__ == '__main__':
-    print_status('[SERVER]', '=' * 60)
-    print_status('[SERVER]', 'Server Flask Avviato')
-    print_status('[SERVER]', 'MODALITÀ: Confronto ROW x ROW (nessun filtering)')
-    print_status('[SERVER]', 'Endpoints disponibili:')
-    print_status('[SERVER]', '  POST /save_thr         - Salva threshold')
-    print_status('[SERVER]', '  POST /upload_context   - Carica context CKKS')
-    print_status('[SERVER]', '  GET /evaluate-column  - Genera matrice DC ROW x ROW')
-    print_status('[SERVER]', '  POST /end_connection   - Chiude connessione')
-    print_status('[SERVER]', '=' * 60)
+@app.route("/evaluate-column", methods=["POST"])
+def evaluate_column():
+    """
+    Endpoint per valutare le colonne del dataset e generare matrice DC.
     
-    app.run(port=5000, threaded=True, use_reloader=False)
+    Request body:
+    {
+        "path_df": "path/to/dataset.csv",
+        "path": "path/to/output"
+    }
+    
+    Returns:
+        JSON con status e path ai file generati
+    """
+    try:
+        # Validazione input
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Nessun dato ricevuto"}), 400
+        
+        path_df = data.get('path_df')
+        output_path = data.get('path')
+        
+        if not path_df:
+            return jsonify({"error": "path_df mancante"}), 400
+        if not output_path:
+            return jsonify({"error": "path mancante"}), 400
+        
+        print_status('[SERVER]', f'File ricevuto dal client: {path_df}')
+        print_status('[SERVER]', f'File esiste: {os.path.exists(path_df)}')
+        logger.info(f"[SERVER] Inizio elaborazione: {path_df}")
+        
+        # 1. Carica e converti dataset
+        h5_path, df = DataFrameLoader.load_and_convert(path_df)
+        print_status('[SERVER]', f'Dataset caricato: shape={df.shape}, columns={list(df.columns[:3])}...')
+        logger.info(f"Dataset caricato: {df.shape}")
+        
+        # 2. Recupera threshold globali
+        global json_item
+        thresholds = json_item if json_item else {}
+        
+        # 3. Costruisci matrice DC
+        builder = DCMatrixBuilder(df, thresholds=thresholds)
+        dc_matrix, rank_mapping = builder.build_predicate_matrix()
+        
+        # 3. Salva risultati
+        os.makedirs(output_path, exist_ok=True)
+        
+        matrix_path = os.path.join(output_path, 'Matrix_DCs.csv')
+        mapping_path = os.path.join(output_path, 'Rank_map.json')
+        
+        dc_matrix.to_csv(matrix_path, index=True)  # index=True per includere nomi colonne
+        salva_json(dati=rank_mapping, percorso_file=mapping_path)
+        
+        logger.info("[SERVER] Elaborazione completata")
+        
+        return jsonify({
+            "status": "SUCCESS",
+            "message": "Matrice DC generata con successo",
+            "output": {
+                "matrix": matrix_path,
+                "mapping": mapping_path,
+                "h5_path": h5_path
+            },
+            "stats": {
+                "n_rows": len(df),
+                "n_columns": len(df.columns),
+                "matrix_shape": list(dc_matrix.shape)
+            }
+        }), 200
+        
+    except FileNotFoundError as e:
+        logger.error(f"File non trovato: {e}")
+        return jsonify({"error": f"File non trovato: {str(e)}"}), 404
+    
+    except ValueError as e:
+        logger.error(f"Errore di validazione: {e}")
+        return jsonify({"error": f"Valore non valido: {str(e)}"}), 400
+    
+    except Exception as e:
+        logger.error(f"Errore interno: {e}", exc_info=True)
+        return jsonify({"error": f"Errore interno: {str(e)}"}), 500
+# Avvio del server Flask
+app.run(port=5000, threaded=True, use_reloader=False)
