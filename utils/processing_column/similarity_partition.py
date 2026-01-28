@@ -35,59 +35,140 @@ colors = ["red", "green", "yellow", "blue", "magenta", "cyan"]
 enc_vectors_global = None
 total_memory_gb = round(psutil.virtual_memory().total / (1024 ** 3))
 
-@cuda.jit
+@cuda.jit  # Decorator che indica a Python che questa funzione va eseguita sulla GPU
 def gpu_compute_similarity(data, thresh_arr, sim_mat, n_rows, n_cols):
+    """
+    KERNEL GPU: Questa funzione viene eseguita in parallelo da migliaia di thread sulla GPU.
+    
+    COSA FA:
+    Ogni thread confronta DUE RIGHE di UNA COLONNA e decide se sono simili.
+    La decisione si basa sulla DIFFERENZA ASSOLUTA tra i valori:
+    - Se |valore1 - valore2| <= soglia → simili (1)
+    - Altrimenti → non simili (0)
+    
+    ESEMPIO:
+    Colonna "età": [25, 28, 50, 27]
+    Soglia: 5 anni
+    
+    Confronti:
+    - riga 0 (25) vs riga 1 (28): |25-28| = 3 <= 5 → simili (1)
+    - riga 0 (25) vs riga 2 (50): |25-50| = 25 > 5 → non simili (0)
+    - riga 0 (25) vs riga 3 (27): |25-27| = 2 <= 5 → simili (1)
+    E così via per tutte le coppie...
+    """
+    # STEP 1: Calcola gli indici del thread corrente nella griglia 3D
+    # Ogni thread ha un ID univoco che determina quale confronto deve fare
+    
+    # c = indice della colonna da elaborare
     c = cuda.blockIdx.z
+    
+    # i = indice della prima riga da confrontare
+    # Formula: (blocco * dimensione_blocco) + thread_locale
     i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+    
+    # j = indice della seconda riga da confrontare
     j = cuda.blockIdx.y * cuda.blockDim.y + cuda.threadIdx.y
+    
+    # STEP 2: Controllo dei limiti - assicurati che gli indici siano validi
+    # (possono esserci thread "extra" fuori dai limiti dei dati)
     if c < n_cols and i < n_rows and j < n_rows:
-        v_i = data[i * n_cols + c]
-        v_j = data[j * n_cols + c]
+        
+        # STEP 3: Recupera i valori da confrontare
+        # I dati sono memorizzati in un array 1D appiattito,
+        # quindi calcoliamo l'indice: riga * num_colonne + colonna
+        v_i = data[i * n_cols + c]  # Valore della riga i, colonna c
+        v_j = data[j * n_cols + c]  # Valore della riga j, colonna c
+        
+        # STEP 4: Recupera la soglia per questa colonna
         thresh = thresh_arr[c]
+        
+        # STEP 5: CALCOLO DELLA SIMILARITY
+        # Confronta la differenza assoluta con la soglia:
+        # - Se la differenza è <= soglia → i valori sono simili → scrivi 1
+        # - Altrimenti → i valori NON sono simili → scrivi 0
+        #
+        # Esempio con thresh=10:
+        #   abs(100 - 105) = 5 <= 10 → simili (1)
+        #   abs(100 - 150) = 50 > 10 → non simili (0)
         sim_mat[c, i, j] = 1 if abs(v_i - v_j) <= thresh else 0
 
 def similarity_numeric_gpu(df_num, original_col):
+    """
+    FUNZIONE PRINCIPALE: Calcola la similarity tra valori numerici usando la GPU.
+    
+    DIFFERENZA CON COSINE SIMILARITY:
+    Questa funzione NON usa la cosine similarity classica, ma una similarity
+    basata sulla DISTANZA tra valori: due valori sono simili se la loro
+    differenza è minore di una soglia (threshold).
+    
+    Esempio: se threshold=10 e hai valori 100 e 105, sono simili perché |100-105|=5 < 10
+    
+    PERCHÉ SU GPU?
+    Per dataset grandi con migliaia di righe, calcolare la similarity tra
+    ogni coppia di righe richiederebbe molto tempo su CPU.
+    La GPU può fare migliaia di confronti in parallelo, velocizzando enormemente.
+    """
+    # STEP 1: Carica le soglie (threshold) per ogni colonna
+    # Ogni colonna ha una soglia che definisce "quanto simili" devono essere due valori
     thresholds = get_thr()
 
+    # STEP 2: Preparazione dei dati
     cols = df_num.columns
+    n_rows, n_cols = df_num.shape[0], len(cols)  # Numero di righe e colonne
 
-    n_rows, n_cols = df_num.shape[0], len(cols)
-
-    # Prepara array dati solo per colonne numeric
+    # Crea un array 2D (matrice) per contenere tutti i dati numerici
+    # Usiamo float32 per risparmiare memoria sulla GPU
     data = np.zeros((n_rows, n_cols), dtype=np.float32)
-    thresh_list = []
-    mapping = {}
+    thresh_list = []  # Lista delle soglie per ogni colonna
+    mapping = {}  # Mappa tra indici e nomi delle colonne
 
+    # STEP 3: Carica i dati colonna per colonna
     pbar = tqdm(desc='[CLIENT] Loading numeric columns', total=n_cols, leave=False)
     for idx, col in enumerate(cols):
-        info = thresholds.get(col)
-        mapping[str(original_col.index(col))] = str(col)
+        info = thresholds.get(col)  # Informazioni sulla colonna
+        mapping[str(original_col.index(col))] = str(col)  # Salva la mappatura
 
+        # Se la colonna è numerica e NON sensibile, carica i suoi valori
         if info and info.get('type') == 'numeric' and not info.get('sensitive'):
             data[:, idx] = (df_num[col].to_numpy().astype(np.float32))
 
+        # Aggiungi la soglia: 0.0 se non c'è info o è sensibile, altrimenti usa la soglia definita
         if not info or info.get('type') != 'numeric' or info.get('sensitive'):
             thresh_list.append(0.0)
         else:
             thresh_list.append(float(info.get('threshold', 0)))
         pbar.update(1)
 
+    # Converti la lista di soglie in array numpy
     thresh_arr = np.array(thresh_list, dtype=np.float32)
 
-    # Configurazione blocco/griglia
-    dev = cuda.get_current_device()
-    max_thr = dev.MAX_THREADS_PER_BLOCK
-    side = int(np.floor(np.sqrt(max_thr)))
+    # STEP 4: CONFIGURAZIONE GPU - definisci come organizzare il lavoro parallelo
+    # La GPU lavora con "blocchi" e "griglie" di thread (unità di esecuzione parallele)
+    dev = cuda.get_current_device()  # Ottieni la GPU corrente
+    max_thr = dev.MAX_THREADS_PER_BLOCK  # Massimo numero di thread per blocco
+    side = int(np.floor(np.sqrt(max_thr)))  # Calcola dimensione ottimale per blocco quadrato
+    
+    # Definisci dimensioni blocco: (righe, colonne, profondità)
     bx, by = min(side, n_rows), min(side, n_rows)
     block = (bx, by, 1)
+    
+    # Definisci dimensioni griglia: quanti blocchi servono per coprire tutti i dati
+    # ceil = arrotonda per eccesso per assicurarsi di coprire tutti i dati
     grid = (ceil(n_rows / bx), ceil(n_rows / by), n_cols)
 
-    # 3) Copia dati su GPU, alloca d_sim direttamente in device
-    d_data = cuda.to_device(data.ravel())
-    d_thresh = cuda.to_device(thresh_arr)
+    # STEP 5: TRASFERIMENTO DATI SULLA GPU
+    # Copia i dati dalla RAM del computer alla memoria della GPU
+    d_data = cuda.to_device(data.ravel())  # Dati appiattiti in 1D
+    d_thresh = cuda.to_device(thresh_arr)  # Soglie
+    # Alloca spazio sulla GPU per la matrice di similarity (risultato)
+    # Dimensione: (n_cols, n_rows, n_rows) - per ogni colonna, matrice n_rows x n_rows
+    # Usiamo int8 (1 byte) perché ci basta 0 o 1 (simile/non simile)
     d_sim = cuda.device_array((n_cols, n_rows, n_rows), dtype=np.int8)
 
-    # 4) Lancia il kernel
+    # STEP 6: ESECUZIONE DEL KERNEL GPU
+    # Lancia la funzione gpu_compute_similarity sulla GPU
+    # La GPU eseguirà migliaia di confronti in parallelo
+    # Ogni thread confronterà due righe di una colonna e deciderà se sono simili
     gpu_compute_similarity[grid, block](d_data, d_thresh, d_sim, n_rows, n_cols)
 
     # Stream results to JSONL per column sequentially

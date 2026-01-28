@@ -7,7 +7,6 @@ warnings.filterwarnings("ignore")
 import h5py
 import json
 import torch
-from memory_profiler import memory_usage
 from sentence_transformers import SentenceTransformer
 
 from utils.Homomorphic.homomorphic_client import invia_bfv, invia_ckks, decode_decrypt_ckks, ricevi_ckks, \

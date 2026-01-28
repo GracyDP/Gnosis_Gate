@@ -63,8 +63,8 @@ def compute_minimum(path):
     print_status('[CLIENT]',' Inizio computazioni minimi.')
     
     # Debug: mostra quale file viene inviato al server
-    print_status('[CLIENT]', f' File inviato al server: {path_dict["path_df"]}')
-    print_status('[CLIENT]', f' File esiste: {os.path.exists(path_dict["path_df"])}')
+    #print_status('[CLIENT]', f' File inviato al server: {path_dict["path_df"]}')
+    #print_status('[CLIENT]', f' File esiste: {os.path.exists(path_dict["path_df"])}')
 
     url = f"{server_url.rstrip('/')}{evaluate_endpoint}"
     resp = requests.post(url,json={'path_df': path_dict['path_df'], 'path': path})
@@ -145,9 +145,9 @@ def main(experiments):
             # Caricare il file parquet in un DataFrame
             print_status('[CLIENT]','[Mongo] Carico DB da locale.')
 
-        print_status('[CLIENT]','[Mongo_DB Fake] Upload dataset...')
+        #print_status('[CLIENT]','[Mongo_DB Fake] Upload dataset...')
 
-        print_status('[CLIENT]','[Threshold] Sending threshold...')
+        #print_status('[CLIENT]','[Threshold] Sending threshold...')
         if send_threshold(path):
             print_status('[CLIENT]','[Threshold] Threshold Sent.')
         else:
@@ -162,7 +162,7 @@ def main(experiments):
                 print_status('[CLIENT]','[CALLBACK] Configurazione contesto per callback server...')
                 import tenseal as ts
                 # Carica il contesto segreto per decriptare
-                context_path = 'utils\Homomorphic\ckks\ckks_secret.context'
+                context_path = 'utils\Homomorphic\ckks\ckks_secret.context'  
                 with open(context_path, 'rb') as f:
                     secret_context = ts.context_from(f.read())
                 set_client_context(secret_context)

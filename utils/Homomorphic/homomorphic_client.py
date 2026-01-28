@@ -179,33 +179,69 @@ def load_bfv_sk_context():
         context = ts.context_from(f.read())
     return context
 
-ckks_sk_context = load_ckks_sk_context()
-ckks_pk_context = load_ckks_pk_context()
-ckks_secret_key = ckks_sk_context.secret_key()
+# Lazy loading: i contesti vengono caricati solo quando necessari
+_ckks_sk_context = None
+_ckks_pk_context = None
+_ckks_secret_key = None
+_bfv_sk_context = None
+_bfv_pk_context = None
+_bfv_secret_key = None
 
-bfv_sk_context = load_ckks_sk_context()
-bfv_pk_context = load_ckks_pk_context()
-bfv_secret_key = bfv_sk_context.secret_key()
+def get_ckks_sk_context():
+    global _ckks_sk_context
+    if _ckks_sk_context is None:
+        _ckks_sk_context = load_ckks_sk_context()
+    return _ckks_sk_context
+
+def get_ckks_pk_context():
+    global _ckks_pk_context
+    if _ckks_pk_context is None:
+        _ckks_pk_context = load_ckks_pk_context()
+    return _ckks_pk_context
+
+def get_ckks_secret_key():
+    global _ckks_secret_key
+    if _ckks_secret_key is None:
+        _ckks_secret_key = get_ckks_sk_context().secret_key()
+    return _ckks_secret_key
+
+def get_bfv_sk_context():
+    global _bfv_sk_context
+    if _bfv_sk_context is None:
+        _bfv_sk_context = load_bfv_sk_context()
+    return _bfv_sk_context
+
+def get_bfv_pk_context():
+    global _bfv_pk_context
+    if _bfv_pk_context is None:
+        _bfv_pk_context = load_bfv_pk_context()
+    return _bfv_pk_context
+
+def get_bfv_secret_key():
+    global _bfv_secret_key
+    if _bfv_secret_key is None:
+        _bfv_secret_key = get_bfv_sk_context().secret_key()
+    return _bfv_secret_key
 
 def decode_decrypt_ckks(element):
-    return float(element.decrypt(ckks_secret_key)[0])
+    return float(element.decrypt(get_ckks_secret_key())[0])
 
 def decode_decrypt_bfv(element):
-    return float(element.decrypt(bfv_secret_key)[0])
+    return float(element.decrypt(get_bfv_secret_key())[0])
 
 def ricevi_ckks(element):
     if isinstance(element, str):
         enc_bytes = base64.b64decode(element)
     else:
         enc_bytes = element  # se già bytes
-    return ts.ckks_vector_from(ckks_pk_context, enc_bytes)
+    return ts.ckks_vector_from(get_ckks_pk_context(), enc_bytes)
 
 def ricevi_bfv(element):
     if isinstance(element, str):
         enc_bytes = base64.b64decode(element)
     else:
         enc_bytes = element  # se già bytes
-    return ts.bfv_vector_from(bfv_pk_context, enc_bytes)
+    return ts.bfv_vector_from(get_bfv_pk_context(), enc_bytes)
 
 def invia_ckks(element):
     return convert_from_ckks_bfv_to_base64(element)
@@ -217,13 +253,13 @@ def convert_from_ckks_bfv_to_base64(element):
     return base64.b64encode(element.serialize()).decode("utf-8")
 
 def convert_from_base64_to_ckks(element):
-    return ts.ckks_vector_from(ckks_pk_context,base64.b64decode(element))
+    return ts.ckks_vector_from(get_ckks_pk_context(),base64.b64decode(element))
 
 def convert_from_base64_to_bfv(element):
-    return ts.bfv_vector_from(bfv_pk_context,base64.b64decode(element))
+    return ts.bfv_vector_from(get_bfv_pk_context(),base64.b64decode(element))
 
 def convert_from_object_to_ckks(element):
-    return ts.ckks_vector(ckks_pk_context,element)
+    return ts.ckks_vector(get_ckks_pk_context(),element)
 
 def convert_from_object_to_bfv(element):
-    return ts.bfv_vector(bfv_pk_context,element)
+    return ts.bfv_vector(get_bfv_pk_context(),element)

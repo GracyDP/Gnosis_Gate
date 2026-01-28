@@ -50,16 +50,12 @@ def decrypt_and_compute():
         col1 = data.get('col1')
         col2 = data.get('col2')
         
-        print_status('[CLIENT-CALLBACK]', f'📥 RICHIESTA dal server: {operation}({col1}, {col2})')
-        
         # Recupera il DataFrame originale
         original_df = encrypted_data.get('__original_df__')
         if original_df is None:
             error_msg = "DataFrame originale non configurato"
-            print_status('[CLIENT-CALLBACK]', f'ERRORE: {error_msg}')
+            print_status('[CLIENT-CALLBACK]', f' ERRORE: {error_msg}')
             return jsonify({"error": error_msg}), 400
-        
-        print_status('[CLIENT-CALLBACK]', f'Colonne disponibili: {list(original_df.columns[:5])}...')
         
         # Verifica che le colonne esistano
         if col1 not in original_df.columns:
@@ -73,15 +69,10 @@ def decrypt_and_compute():
             return jsonify({"error": error_msg}), 400
         
         # Estrai i dati in chiaro
-        print_status('[CLIENT-CALLBACK]', f'Estrazione dati in chiaro...')
         data1 = original_df[col1].values
         data2 = original_df[col2].values
         
-        print_status('[CLIENT-CALLBACK]', f'   Col1: {len(data1)} valori, tipo={type(data1[0]).__name__}')
-        print_status('[CLIENT-CALLBACK]', f'   Col2: {len(data2)} valori, tipo={type(data2[0]).__name__}')
-        
         # Esegui l'operazione richiesta
-        print_status('[CLIENT-CALLBACK]', f'Esecuzione operazione: {operation}')
         
         # Usa sempre "similarity" che replica la logica del server
         if operation in ["correlation", "similarity"]:
@@ -94,8 +85,6 @@ def decrypt_and_compute():
             error_msg = f"Operazione non supportata: {operation}"
             print_status('[CLIENT-CALLBACK]', f'ERRORE: {error_msg}')
             return jsonify({"error": error_msg}), 400
-        
-        print_status('[CLIENT-CALLBACK]', f'RISULTATO: {result:.6f} - Invio al server')
         
         return jsonify({
             "result": float(result),
@@ -110,40 +99,252 @@ def decrypt_and_compute():
         return jsonify({"error": str(e)}), 500
 
 
-def _compute_similarity_like_server(data1, data2):
+@app.route("/evaluate_predicates", methods=["POST"])
+def evaluate_predicates():
     """
-    Replica ESATTAMENTE la logica del server per calcolare similarità.
-    Stesso codice di DCMatrixBuilder._compute_pairwise_metric per dati in chiaro.
+    Valuta predicati riga per riga per la costruzione di Denial Constraints.
+    
+    Il server invia:
+    - Lista di predicati da valutare (es: [{"col1": "COL0", "col2": "COL1", "op": "NEQ"}])
+    - Opzionalmente: coppie di righe specifiche da confrontare
+    
+    Il client risponde con:
+    - Statistiche di supporto per ogni predicato (quante coppie di righe lo soddisfano)
+    """
+    global encrypted_data
+    
+    try:
+        data = request.get_json()
+        predicates = data.get('predicates', [])  # Lista di predicati da valutare
+        row_pairs = data.get('row_pairs', None)  # Coppie di righe specifiche (opzionale)
+        sample_size = data.get('sample_size', None)  # Numero di campioni (opzionale)
+        
+        print_status('[CLIENT-CALLBACK]', f'Valutazione {len(predicates)} predicati...')
+        
+        # Recupera il DataFrame originale
+        original_df = encrypted_data.get('__original_df__')
+        if original_df is None:
+            return jsonify({"error": "DataFrame originale non configurato"}), 400
+        
+        n_rows = len(original_df)
+        print_status('[CLIENT-CALLBACK]', f' Dataset: {n_rows} righe')
+        
+        # Se non specificate, genera coppie di righe da confrontare
+        if row_pairs is None:
+            if sample_size and sample_size < (n_rows * (n_rows - 1)) // 2:
+                # Campionamento casuale per dataset grandi
+                import random
+                all_pairs = [(i, j) for i in range(n_rows) for j in range(i+1, n_rows)]
+                row_pairs = random.sample(all_pairs, min(sample_size, len(all_pairs)))
+                print_status('[CLIENT-CALLBACK]', f' Campionamento: {len(row_pairs)} coppie casuali')
+            else:
+                # Tutte le coppie di righe distinte
+                max_rows = min(1000, n_rows)  # Limita per evitare esplosione combinatoria
+                row_pairs = [(i, j) for i in range(max_rows) for j in range(i+1, max_rows)]
+                print_status('[CLIENT-CALLBACK]', f'Valutazione completa: {len(row_pairs)} coppie')
+        
+        # Valuta ogni predicato su tutte le coppie di righe
+        results = []
+        
+        for pred_idx, predicate in enumerate(predicates):
+            col1_name = predicate['col1']
+            col2_name = predicate['col2']
+            operator = predicate['op']  # 'EQ', 'NEQ', 'LT', 'LE', 'GT', 'GE'
+            
+            # Verifica che le colonne esistano
+            if col1_name not in original_df.columns or col2_name not in original_df.columns:
+                print_status('[CLIENT-CALLBACK]', f'WARNING: Colonne {col1_name}/{col2_name} non trovate')
+                continue
+            
+            col1_data = original_df[col1_name].values
+            col2_data = original_df[col2_name].values
+            
+            # Valuta il predicato per ogni coppia di righe
+            satisfied_count = 0
+            satisfied_pairs = []
+            
+            for row_i, row_j in row_pairs:
+                val1 = col1_data[row_i]  # t0.col1
+                val2 = col2_data[row_j]  # t1.col2
+                
+                is_satisfied = _evaluate_predicate(val1, val2, operator)
+                
+                if is_satisfied:
+                    satisfied_count += 1
+                    if len(satisfied_pairs) < 100:  # Salva solo i primi 100 esempi
+                        satisfied_pairs.append([int(row_i), int(row_j)])
+            
+            support = satisfied_count / len(row_pairs) if row_pairs else 0
+            
+            results.append({
+                'predicate_index': pred_idx,
+                'col1': col1_name,
+                'col2': col2_name,
+                'operator': operator,
+                'satisfied_count': satisfied_count,
+                'total_pairs': len(row_pairs),
+                'support': float(support),
+                'satisfied_pairs': satisfied_pairs  # Primi 100 esempi
+            })
+            
+            if (pred_idx + 1) % 50 == 0:
+                print_status('[CLIENT-CALLBACK]', f'Progresso: {pred_idx + 1}/{len(predicates)} predicati')
+        
+        print_status('[CLIENT-CALLBACK]', f'Valutazione completata: {len(results)} predicati')
+        
+        return jsonify({
+            "predicates_evaluated": len(predicates),
+            "row_pairs_evaluated": len(row_pairs),
+            "results": results
+        }), 200
+        
+    except Exception as e:
+        print_status('[CLIENT-CALLBACK]', f'ERRORE valutazione predicati: {str(e)}')
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+def _evaluate_predicate(val1, val2, operator):
+    """
+    Valuta un singolo predicato tra due valori.
+    
+    Args:
+        val1: valore dalla riga i, colonna 1 (t0.col1)
+        val2: valore dalla riga j, colonna 2 (t1.col2)
+        operator: 'EQ', 'NEQ', 'LT', 'LE', 'GT', 'GE'
+    
+    Returns:
+        bool: True se il predicato è soddisfatto
     """
     import pandas as pd
     
-    # Converti in Series pandas
+    # Gestisci NaN
+    if pd.isna(val1) or pd.isna(val2):
+        return False
+    
+    try:
+        if operator == 'EQ':
+            return val1 == val2
+        elif operator == 'NEQ':
+            return val1 != val2
+        elif operator == 'LT':
+            return val1 < val2
+        elif operator == 'LE':
+            return val1 <= val2
+        elif operator == 'GT':
+            return val1 > val2
+        elif operator == 'GE':
+            return val1 >= val2
+        else:
+            return False
+    except (TypeError, ValueError):
+        # Se i valori non sono comparabili, considera solo EQ/NEQ
+        if operator == 'EQ':
+            return str(val1) == str(val2)
+        elif operator == 'NEQ':
+            return str(val1) != str(val2)
+        return False
+
+
+def _compute_similarity_like_server(data1, data2):
+    """
+    Calcola COSINE SIMILARITY vera tra due colonne (lato CLIENT).
+    
+    COSA FA QUESTA FUNZIONE:
+    Quando il client deve calcolare la similarity tra due colonne,
+    usa la stessa logica matematica del server per garantire coerenza.
+    
+    Formula matematica: cosine_similarity = (A · B) / (||A|| × ||B||)
+    Dove:
+    - A, B = i due vettori da confrontare
+    - A · B = prodotto scalare (dot product)
+    - ||A||, ||B|| = norme (lunghezze) dei vettori
+    """
+    import pandas as pd
+    from sklearn.preprocessing import LabelEncoder
+    
+    # PREPARAZIONE: Converti i dati in formato pandas Series per manipolazione più facile
     s1 = pd.Series(data1)
     s2 = pd.Series(data2)
     
-    # Tenta conversione numerica
-    numeric1 = pd.to_numeric(s1, errors='coerce')
-    numeric2 = pd.to_numeric(s2, errors='coerce')
+    # STEP 1: Converti entrambe le colonne in vettori numerici
+    # Questo passaggio è cruciale perché la cosine similarity richiede numeri.
+    # Se le colonne contengono testo (es: "rosso", "blu"), verranno codificate in numeri.
+    vec1 = _convert_to_numeric_vector(s1)
+    vec2 = _convert_to_numeric_vector(s2)
     
-    is_numeric1 = numeric1.notna().sum() > len(s1) * 0.5
-    is_numeric2 = numeric2.notna().sum() > len(s2) * 0.5
+    # STEP 2: Allinea le lunghezze dei due vettori
+    # Se una colonna ha 100 righe e l'altra 80, prendiamo solo le prime 80 di entrambe
+    min_len = min(len(vec1), len(vec2))
+    vec1 = vec1[:min_len]  # Tronca al minimo comune
+    vec2 = vec2[:min_len]
     
-    # CASO 1: Entrambe numeriche → Correlazione di Pearson
-    if is_numeric1 and is_numeric2:
-        print_status('[CLIENT-CALLBACK]', f'   Entrambe numeriche - correlazione')
-        return _numeric_similarity(numeric1, numeric2)
+    # STEP 3: Rimuovi le righe con valori NaN (mancanti) in uno o entrambi i vettori
+    # Creiamo una "maschera" che indica quali posizioni hanno valori validi
+    mask = ~(np.isnan(vec1) | np.isnan(vec2))  # True = entrambi validi, False = almeno uno è NaN
+    vec1_clean = vec1[mask]  # Mantieni solo i valori validi del primo vettore
+    vec2_clean = vec2[mask]  # Mantieni solo i valori validi del secondo vettore
     
-    # CASO 2: Entrambe categoriche con pochi valori unici → Jaccard overlap
-    unique1 = set(s1.unique()) if len(s1) < 10000 else None
-    unique2 = set(s2.unique()) if len(s2) < 10000 else None
+    # Controllo di sicurezza: servono almeno 2 valori per calcolare una similarity significativa
+    if len(vec1_clean) < 2:
+        return 0.0
     
-    if unique1 is not None and unique2 is not None:
-        print_status('[CLIENT-CALLBACK]', f'   📑 Entrambe categoriche → overlap')
-        return _categorical_overlap(unique1, unique2)
+    # STEP 4: Calcola la COSINE SIMILARITY
     
-    # CASO 3: Fallback → Similarità basata su cardinalità
-    print_status('[CLIENT-CALLBACK]', f'   Fallback - cardinalità')
-    return _cardinality_similarity(s1.nunique(), s2.nunique())
+    # 4a) PRODOTTO SCALARE (dot product): somma dei prodotti elemento per elemento
+    # Esempio: [1,2,3] · [4,5,6] = (1*4) + (2*5) + (3*6) = 32
+    dot_product = np.dot(vec1_clean, vec2_clean)
+    
+    # 4b) NORMA del primo vettore: lunghezza geometrica del vettore
+    # Formula: ||v|| = sqrt(v1² + v2² + ... + vn²)
+    # Esempio: ||[3,4]|| = sqrt(3² + 4²) = sqrt(9 + 16) = 5
+    norm1 = np.linalg.norm(vec1_clean)
+    
+    # 4c) NORMA del secondo vettore
+    norm2 = np.linalg.norm(vec2_clean)
+    
+    # 4d) Controllo divisione per zero: se un vettore è tutto zeri, non possiamo calcolare
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    
+    # 4e) CALCOLO FINALE: dividi il prodotto scalare per il prodotto delle norme
+    # Questo normalizza il risultato nell'intervallo [-1, 1]
+    # Interpretazione:
+    #   1.0 = vettori identici (stesso "orientamento")
+    #   0.0 = vettori perpendicolari (nessuna correlazione)
+    #  -1.0 = vettori opposti (correlazione negativa)
+    cosine_sim = dot_product / (norm1 * norm2)
+    
+    # STEP 5: Ritorna il valore assoluto per avere sempre un range positivo [0, 1]
+    # Questo perché nel nostro contesto ci interessa solo "quanto sono simili",
+    # non se hanno correlazione positiva o negativa
+    return abs(float(cosine_sim))
+
+
+def _convert_to_numeric_vector(series):
+    """
+    Converte una Series pandas in vettore numerico.
+    - Se già numerica: usa direttamente
+    - Se categorica/stringa: usa LabelEncoder per codificarla
+    """
+    import pandas as pd
+    from sklearn.preprocessing import LabelEncoder
+    
+    # Prova conversione numerica diretta
+    numeric_series = pd.to_numeric(series, errors='coerce')
+    
+    # Se > 50% valori convertiti con successo → usa come numerico
+    if numeric_series.notna().sum() > len(series) * 0.5:
+        return numeric_series.fillna(0).values
+    
+    # Altrimenti: codifica categorica con LabelEncoder
+    le = LabelEncoder()
+    # Riempi NaN con stringa placeholder prima dell'encoding
+    series_filled = series.fillna('__NAN__').astype(str)
+    encoded = le.fit_transform(series_filled)
+    
+    return encoded.astype(float)
 
 
 def _numeric_similarity(s1, s2):
@@ -180,7 +381,6 @@ def _numeric_similarity(s1, s2):
         return abs(float(corr)) if not pd.isna(corr) else 0.0
         
     except Exception as e:
-        print_status('[CLIENT-CALLBACK]', f'   Errore correlazione: {e}')
         return 0.0
 
 
@@ -196,7 +396,6 @@ def _categorical_overlap(set1, set2):
         return float(intersection) / union if union > 0 else 0.0
         
     except Exception as e:
-        print_status('[CLIENT-CALLBACK]', f'   Errore overlap: {e}')
         return 0.0
 
 
@@ -212,7 +411,6 @@ def _cardinality_similarity(n1, n2):
         return float(ratio * 0.5)  # Scala a 0-0.5 per distinguerla da altre metriche
         
     except Exception as e:
-        print_status('[CLIENT-CALLBACK]', f'   Errore cardinalità: {e}')
         return 0.0
 
 
@@ -242,7 +440,6 @@ def _compute_correlation(data1, data2):
     arr2 = arr2[mask]
     
     if len(arr1) < 2:
-        print_status('[CLIENT-CALLBACK]', f'   Troppi pochi valori validi ({len(arr1)}), ritorno 0.0')
         return 0.0
     
     # Correlazione di Pearson
