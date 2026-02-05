@@ -138,11 +138,11 @@ def send_ckks_context():
         # print_status(response.text)
         return True
     except requests.HTTPError as e:
-        raise Exception(f"❌ HTTP error: {e} – {response.text}")
+        raise Exception(f"HTTP error: {e} – {response.text}")
     except requests.RequestException as e:
-        raise Exception(f"❌ Errore di connessione: {e}")
+        raise Exception(f"Errore di connessione: {e}")
     except ValueError:
-        raise Exception("❌ Risposta non JSON dal server")
+        raise Exception("Risposta non JSON dal server")
 
 def send_bfv_context():
     url = f"{server_url.rstrip('/')}/upload_context"
@@ -153,11 +153,11 @@ def send_bfv_context():
         # print_status(response.text)
         return True
     except requests.HTTPError as e:
-        raise Exception(f"❌ HTTP error: {e} – {response.text}")
+        raise Exception(f"HTTP error: {e} – {response.text}")
     except requests.RequestException as e:
-        raise Exception(f"❌ Errore di connessione: {e}")
+        raise Exception(f"Errore di connessione: {e}")
     except ValueError:
-        raise Exception("❌ Risposta non JSON dal server")
+        raise Exception("Risposta non JSON dal server")
 
 def load_ckks_pk_context():
     with open(ctx_path_pk_ckks, "rb") as f:

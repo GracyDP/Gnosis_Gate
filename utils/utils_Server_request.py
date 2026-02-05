@@ -17,13 +17,23 @@ def request_operation_to_client(
     col1: str,
     col2: str,
     encrypted_data1=None,
+<<<<<<< Updated upstream
     encrypted_data2=None
+=======
+    encrypted_data2=None,
+    operator=None,      # AGGIUNTO: operatore per predicati
+    row_pairs=None      # AGGIUNTO: coppie di righe per predicati
+>>>>>>> Stashed changes
 ):
     """
     Richiede al client di eseguire un'operazione su dati cifrati.
 
     Returns:
+<<<<<<< Updated upstream
         float: Risultato dell'operazione
+=======
+        float o dict: Risultato dell'operazione
+>>>>>>> Stashed changes
     """
 
     payload = {
@@ -36,6 +46,13 @@ def request_operation_to_client(
         payload["encrypted_data1"] = encrypted_data1
     if encrypted_data2 is not None:
         payload["encrypted_data2"] = encrypted_data2
+<<<<<<< Updated upstream
+=======
+    if operator is not None:
+        payload["operator"] = operator      # Passa operator al client
+    if row_pairs is not None:
+        payload["row_pairs"] = row_pairs    # Passa row_pairs al client
+>>>>>>> Stashed changes
 
     url = f"{CLIENT_CALLBACK_URL}/decrypt_and_compute"
 
@@ -69,7 +86,18 @@ def request_operation_to_client(
         if result is None:
             raise ValueError("Risultato nullo ricevuto dal client")
 
+<<<<<<< Updated upstream
         # 4. Conversione sicura a float
+=======
+        # DEBUG: Log del risultato ricevuto
+        print_status('[SERVER]', f'Ricevuto result: type={type(result)}, value={result if not isinstance(result, dict) else f"dict con {len(result)} chiavi"}')
+
+        # 4. Se il risultato è un dict (es: predicati con count e pairs), ritorna direttamente
+        if isinstance(result, dict):
+            return result
+
+        # 5. Altrimenti, conversione sicura a float
+>>>>>>> Stashed changes
         try:
             result = float(result)
         except (TypeError, ValueError) as e:

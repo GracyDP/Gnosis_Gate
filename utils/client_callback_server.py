@@ -41,6 +41,15 @@ def decrypt_and_compute():
     IMPORTANTE: Non decripta nulla - i dati originali sono già in chiaro.
     Il server chiama questa funzione per operazioni su colonne che LUI vede cifrate,
     ma il client ha i dati originali in chiaro.
+<<<<<<< Updated upstream
+=======
+    
+    OPERAZIONI SUPPORTATE:
+    - similarity: calcola cosine similarity tra due colonne
+    - diagonal_metric: calcola statistiche della diagonale (una sola colonna)
+    - evaluate_predicate: valuta predicato su coppie di righe
+    - correlation, dot_product, distance: altre metriche
+>>>>>>> Stashed changes
     """
     global client_context, encrypted_data
     
@@ -48,7 +57,11 @@ def decrypt_and_compute():
         data = request.get_json()
         operation = data.get('operation')
         col1 = data.get('col1')
+<<<<<<< Updated upstream
         col2 = data.get('col2')
+=======
+        col2 = data.get('col2')  # Può essere None per diagonal_metric
+>>>>>>> Stashed changes
         
         # Recupera il DataFrame originale
         original_df = encrypted_data.get('__original_df__')
@@ -57,7 +70,43 @@ def decrypt_and_compute():
             print_status('[CLIENT-CALLBACK]', f' ERRORE: {error_msg}')
             return jsonify({"error": error_msg}), 400
         
+<<<<<<< Updated upstream
         # Verifica che le colonne esistano
+=======
+        # ========================================
+        # OPERAZIONE: DIAGONAL_METRIC
+        # Calcola statistiche per una singola colonna (diagonale della matrice)
+        # ========================================
+        if operation == "diagonal_metric":
+            if col1 not in original_df.columns:
+                return jsonify({"error": f"Colonna {col1} non trovata"}), 400
+            
+            col_data = original_df[col1]
+            
+            # Calcola statistiche
+            nunique = col_data.nunique()
+            n_rows = len(col_data)
+            is_numeric = pd.api.types.is_numeric_dtype(col_data)
+            
+            # Metrica diagonale: quanto è "distintiva" la colonna
+            # Alta cardinalità → valore alto (colonna più informativa)
+            diagonal_value = nunique / n_rows if n_rows > 0 else 0.0
+            
+            print_status('[CLIENT-CALLBACK]', f'Diagonal metric {col1}: {diagonal_value:.4f} (unique={nunique}, rows={n_rows})')
+            
+            return jsonify({
+                "result": float(diagonal_value),
+                "operation": operation,
+                "col": col1,
+                "stats": {
+                    "nunique": int(nunique),
+                    "n_rows": int(n_rows),
+                    "is_numeric": bool(is_numeric)
+                }
+            }), 200
+        
+        # Per le altre operazioni servono entrambe le colonne
+>>>>>>> Stashed changes
         if col1 not in original_df.columns:
             error_msg = f"Colonna {col1} non trovata nel dataset"
             print_status('[CLIENT-CALLBACK]', f'ERRORE: {error_msg}')
@@ -81,16 +130,51 @@ def decrypt_and_compute():
             result = _compute_dot_product(data1, data2)
         elif operation == "distance":
             result = _compute_distance(data1, data2)
+<<<<<<< Updated upstream
+=======
+        elif operation == "evaluate_predicate":
+            # Valuta predicato su coppie di righe
+            operator = data.get('operator')
+            row_pairs = data.get('row_pairs', [])
+            
+            if not operator or not row_pairs:
+                return jsonify({"error": "Mancano 'operator' o 'row_pairs'"}), 400
+            
+            print_status('[CLIENT-CALLBACK]', f'Valuto predicato: {col1} {operator} {col2} su {len(row_pairs)} coppie')
+            
+            # Ritorna sia conteggio che coppie soddisfatte
+            count, pairs = _evaluate_predicate_on_pairs_with_list(data1, data2, operator, row_pairs)
+            result = {'count': count, 'pairs': pairs}
+            
+            print_status('[CLIENT-CALLBACK]', f'Risultato: {count}/{len(row_pairs)} soddisfatte, {len(pairs)} pairs salvate')
+            print_status('[CLIENT-CALLBACK]', f'  DEBUG: result type={type(result)}, content={result}')
+>>>>>>> Stashed changes
         else:
             error_msg = f"Operazione non supportata: {operation}"
             print_status('[CLIENT-CALLBACK]', f'ERRORE: {error_msg}')
             return jsonify({"error": error_msg}), 400
         
+<<<<<<< Updated upstream
         return jsonify({
             "result": float(result),
             "operation": operation,
             "cols": [col1, col2]
         }), 200
+=======
+        # IMPORTANTE: Se result è già un dict (es: evaluate_predicate), NON convertire in float!
+        if isinstance(result, dict):
+            return jsonify({
+                "result": result,
+                "operation": operation,
+                "cols": [col1, col2]
+            }), 200
+        else:
+            return jsonify({
+                "result": float(result),
+                "operation": operation,
+                "cols": [col1, col2]
+            }), 200
+>>>>>>> Stashed changes
         
     except Exception as e:
         print_status('[CLIENT-CALLBACK]', f'ERRORE: {str(e)}')
@@ -212,7 +296,11 @@ def _evaluate_predicate(val1, val2, operator):
     Args:
         val1: valore dalla riga i, colonna 1 (t0.col1)
         val2: valore dalla riga j, colonna 2 (t1.col2)
+<<<<<<< Updated upstream
         operator: 'EQ', 'NEQ', 'LT', 'LE', 'GT', 'GE'
+=======
+        operator: 'EQ', 'NEQ', 'LT', 'LEQ', 'GT', 'GEQ'
+>>>>>>> Stashed changes
     
     Returns:
         bool: True se il predicato è soddisfatto
@@ -229,6 +317,7 @@ def _evaluate_predicate(val1, val2, operator):
         elif operator == 'NEQ':
             return val1 != val2
         elif operator == 'LT':
+<<<<<<< Updated upstream
             return val1 < val2
         elif operator == 'LE':
             return val1 <= val2
@@ -236,6 +325,15 @@ def _evaluate_predicate(val1, val2, operator):
             return val1 > val2
         elif operator == 'GE':
             return val1 >= val2
+=======
+            return float(val1) < float(val2)
+        elif operator in ['LEQ', 'LE']:
+            return float(val1) <= float(val2)
+        elif operator == 'GT':
+            return float(val1) > float(val2)
+        elif operator in ['GEQ', 'GE']:
+            return float(val1) >= float(val2)
+>>>>>>> Stashed changes
         else:
             return False
     except (TypeError, ValueError):
@@ -247,6 +345,77 @@ def _evaluate_predicate(val1, val2, operator):
         return False
 
 
+<<<<<<< Updated upstream
+=======
+def _evaluate_predicate_on_pairs(data1, data2, operator, row_pairs):
+    """
+    Valuta un predicato su coppie di righe e ritorna il conteggio.
+    
+    Args:
+        data1: array di valori colonna 1
+        data2: array di valori colonna 2
+        operator: operatore da testare
+        row_pairs: lista di tuple (i, j) - indici righe da confrontare
+        
+    Returns:
+        int: numero di coppie che soddisfano il predicato
+    """
+    satisfied = 0
+    
+    for i, j in row_pairs:
+        if i >= len(data1) or j >= len(data2):
+            continue
+        
+        val1 = data1[i]
+        val2 = data2[j]
+        
+        if _evaluate_predicate(val1, val2, operator):
+            satisfied += 1
+    
+    return satisfied
+
+
+def _evaluate_predicate_on_pairs_with_list(data1, data2, operator, row_pairs):
+    """
+    Valuta un predicato su coppie di righe e ritorna conteggio e lista coppie.
+    
+    Args:
+        data1: array di valori colonna 1
+        data2: array di valori colonna 2
+        operator: operatore da testare
+        row_pairs: lista di tuple (i, j) - indici righe da confrontare
+        
+    Returns:
+        Tuple[int, List]: (numero coppie soddisfatte, lista coppie soddisfatte)
+    """
+    satisfied = 0
+    satisfied_pairs = []
+    debug_first = True  # Stampa debug prima coppia
+    
+    for i, j in row_pairs:
+        if i >= len(data1) or j >= len(data2):
+            continue
+        
+        val1 = data1[i]
+        val2 = data2[j]
+        
+        is_satisfied = _evaluate_predicate(val1, val2, operator)
+        
+        # Debug: stampa prima coppia
+        if debug_first:
+            print_status('[CLIENT-CALLBACK]', f'  Prima coppia: [{i},{j}] val1={val1}, val2={val2}, op={operator} => {is_satisfied}')
+            debug_first = False
+        
+        if is_satisfied:
+            satisfied += 1
+            # Salva solo primi 100 per non esplodere memoria
+            if len(satisfied_pairs) < 100:
+                satisfied_pairs.append([int(i), int(j)])
+    
+    return satisfied, satisfied_pairs
+
+
+>>>>>>> Stashed changes
 def _compute_similarity_like_server(data1, data2):
     """
     Calcola COSINE SIMILARITY vera tra due colonne (lato CLIENT).

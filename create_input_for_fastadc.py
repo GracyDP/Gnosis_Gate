@@ -57,8 +57,13 @@ def convert_json_to_fastadc_csv(input_json_path, output_csv_path):
         parts = pred_key.split('_')
         
         # Gestisci colonne con underscore nel nome (es: "COL_0_COL_1_NEQ")
+<<<<<<< Updated upstream
         # Trova l'operatore (ultimo elemento)
         operators = ['EQ', 'NEQ', 'LT', 'LE', 'GT', 'GE']
+=======
+        # Trova l'operatore (ultimo elemento) - ORDINE IMPORTANTE: prima quelli lunghi (GEQ, LEQ, NEQ) poi corti (GE, LE, EQ)
+        operators = ['GEQ', 'LEQ', 'NEQ', 'EQ', 'LT', 'GT', 'LE', 'GE']
+>>>>>>> Stashed changes
         operator = None
         
         for op in operators:
@@ -76,7 +81,11 @@ def convert_json_to_fastadc_csv(input_json_path, output_csv_path):
                 break
         
         if operator is None:
+<<<<<<< Updated upstream
             print(f"⚠️  Predicato senza operatore valido: {pred_key}")
+=======
+            print(f"Predicato senza operatore valido: {pred_key}")
+>>>>>>> Stashed changes
             continue
         
         data.append({
@@ -213,11 +222,15 @@ def main():
     print("=" * 70)
     print(f"\n File generato: {output_csv}")
     print(f" Dimensione: {os.path.getsize(output_csv):,} bytes")
+<<<<<<< Updated upstream
     print("\n Prossimi passi:")
     print(f"   1. cd FastADC")
     print(f"   2. java -jar target/FastADC-1.0.jar \\")
     print(f"         --input ../{output_csv} \\")
     print(f"         --output ../DCs_output.txt")
+=======
+
+>>>>>>> Stashed changes
 
 
 if __name__ == "__main__":

@@ -71,6 +71,31 @@ def compute_minimum(path):
     resp.raise_for_status()
 
     print_status('[CLIENT]',' End computazioni minimi.')
+    
+    # Verifica satisfied_pairs nell'ultimo file generato
+    import json
+    stats_file = f'{path}/DC_Predicate_Stats.json'
+    if os.path.exists(stats_file):
+        with open(stats_file, 'r') as f:
+            stats = json.load(f)
+        
+        # Trova ultimo predicato con satisfied_pairs non vuoto
+        last_with_pairs = None
+        for pred_id, pred_data in stats.items():
+            if pred_data.get('satisfied_pairs', []):
+                last_with_pairs = (pred_id, pred_data)
+        
+        if last_with_pairs:
+            pred_id, pred_data = last_with_pairs
+            pairs_count = len(pred_data['satisfied_pairs'])
+            print_status('[CLIENT]', f'  Esempio predicato con satisfied_pairs:')
+            print_status('[CLIENT]', f'    ID: {pred_id}')
+            print_status('[CLIENT]', f'    Support: {pred_data["support"]:.2%}')
+            print_status('[CLIENT]', f'    Satisfied: {pred_data["satisfied"]}/{pred_data["total"]}')
+            print_status('[CLIENT]', f'    Pairs salvate: {pairs_count}')
+            print_status('[CLIENT]', f'    Prime 3 pairs: {pred_data["satisfied_pairs"][:3]}')
+        else:
+            print_status('[CLIENT]', '   ATTENZIONE: Nessun predicato con satisfied_pairs trovato!')
 
     return True
 

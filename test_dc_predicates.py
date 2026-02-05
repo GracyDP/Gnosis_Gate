@@ -46,7 +46,11 @@ def test_predicate_evaluation():
     print("\n3. Invio richiesta valutazione...")
     payload = {
         "path_df": TEST_DATASET,
+<<<<<<< Updated upstream
         "output_path": OUTPUT_PATH
+=======
+        "path": OUTPUT_PATH  # Corretto: il server si aspetta "path", non "output_path"
+>>>>>>> Stashed changes
     }
     
     try:
@@ -63,11 +67,19 @@ def test_predicate_evaluation():
             # 4. Mostra risultati
             print("\n4. Risultati:")
             print(f"   Status: {result.get('status')}")
+<<<<<<< Updated upstream
             print(f"   📝 Message: {result.get('message')}")
             
             if 'stats' in result:
                 stats = result['stats']
                 print(f"\n   📈 Statistiche Dataset:")
+=======
+            print(f"   Message: {result.get('message')}")
+            
+            if 'stats' in result:
+                stats = result['stats']
+                print(f"\n   Statistiche Dataset:")
+>>>>>>> Stashed changes
                 print(f"      - Righe: {stats.get('n_rows')}")
                 print(f"      - Colonne: {stats.get('n_columns')}")
                 print(f"      - Predicati valutati: {stats.get('predicates_evaluated', 'N/A')}")
@@ -88,7 +100,11 @@ def test_predicate_evaluation():
             
         else:
             print(f"   [ERROR] Errore: {response.status_code}")
+<<<<<<< Updated upstream
             print(f"   📝 Risposta: {response.text[:500]}")
+=======
+            print(f"   Risposta: {response.text[:500]}")
+>>>>>>> Stashed changes
             
     except requests.exceptions.Timeout:
         print(f"   [TIMEOUT] Timeout - operazione troppo lunga (>10 min)")
@@ -162,7 +178,11 @@ def analyze_predicate_files(output_path):
             print(f"      - Support min: {min(supports):.2%}")
             print(f"      - Support max: {max(supports):.2%}")
     else:
+<<<<<<< Updated upstream
         print(f"   ⚠️  DC_Predicate_Stats.json non trovato")
+=======
+        print(f"   DC_Predicate_Stats.json non trovato")
+>>>>>>> Stashed changes
 
 
 def test_client_callback():
@@ -170,7 +190,11 @@ def test_client_callback():
     Test diretto del client callback endpoint.
     """
     print("\n" + "=" * 70)
+<<<<<<< Updated upstream
     print("🧪 TEST DIRETTO CLIENT CALLBACK")
+=======
+    print("TEST DIRETTO CLIENT CALLBACK")
+>>>>>>> Stashed changes
     print("=" * 70)
     
     CLIENT_URL = "http://localhost:5001"
@@ -188,7 +212,11 @@ def test_client_callback():
     }
     
     try:
+<<<<<<< Updated upstream
         print(f"\n📤 Invio {len(test_predicates)} predicati di test al client...")
+=======
+        print(f"\nInvio {len(test_predicates)} predicati di test al client...")
+>>>>>>> Stashed changes
         response = requests.post(
             f"{CLIENT_URL}/evaluate_predicates",
             json=payload,
@@ -197,7 +225,11 @@ def test_client_callback():
         
         if response.status_code == 200:
             result = response.json()
+<<<<<<< Updated upstream
             print(f"✅ Risposta ricevuta:")
+=======
+            print(f"Risposta ricevuta:")
+>>>>>>> Stashed changes
             print(f"   - Predicati valutati: {result['predicates_evaluated']}")
             print(f"   - Coppie valutate: {result['row_pairs_evaluated']}")
             
@@ -207,20 +239,35 @@ def test_client_callback():
                     print(f"      • {res['col1']} {res['operator']} {res['col2']}")
                     print(f"        Support: {res['support']:.2%} ({res['satisfied_count']}/{res['total_pairs']})")
         else:
+<<<<<<< Updated upstream
             print(f"❌ Errore: {response.status_code}")
             print(f"   Risposta: {response.text}")
             
     except Exception as e:
         print(f"❌ Errore: {e}")
         print(f"💡 Assicurati che il client sia avviato e il callback attivo")
+=======
+            print(f"Errore: {response.status_code}")
+            print(f"   Risposta: {response.text}")
+            
+    except Exception as e:
+        print(f"Errore: {e}")
+        print(f"Assicurati che il client sia avviato e il callback attivo")
+>>>>>>> Stashed changes
 
 
 if __name__ == "__main__":
     import sys
     
+<<<<<<< Updated upstream
     print("\n" + "🚀 " * 20)
     print("SCRIPT DI TEST - DENIAL CONSTRAINTS PREDICATES")
     print("🚀 " * 20 + "\n")
+=======
+    print("\n" + "=" * 60)
+    print("SCRIPT DI TEST - DENIAL CONSTRAINTS PREDICATES")
+    print("=" * 60 + "\n")
+>>>>>>> Stashed changes
     
     if len(sys.argv) > 1:
         if sys.argv[1] == "client":
